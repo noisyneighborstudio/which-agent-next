@@ -15,6 +15,8 @@ license: MIT
 
 # which-agent-next
 
+Requires the CLI: `npm install -g @sethwebster/which-agent-next` (or prefix calls with `npx -y @sethwebster/which-agent-next`).
+
 `which-agent-next` (alias `wan`) answers one question: **of the agent CLIs on
 this machine, which one should get the next job?** It reads each CLI's real
 quota where that exists, ranks them, and prints the winner.
