@@ -110,6 +110,11 @@ function fail(msg: string): never {
 }
 
 async function main() {
+  if (process.argv[2] === 'loop') {
+    const { loopMain } = await import('./loop/cli.js');
+    await loopMain(process.argv.slice(3));
+    return;
+  }
   const args = parse(process.argv.slice(2));
   const config = loadConfig(args.overrides);
   const probes = args.only.length

@@ -15,6 +15,7 @@
     "skill",
     "scripts/install-skill.mjs",
     "README.md",
+    "docs/loop.md",
     "LICENSE"
   ],
   "engines": {

@@ -76,6 +76,20 @@ There is deliberately no `-p` shorthand for `--prefer`: `-p` is the standard
 non-interactive flag for `claude` and `codex`, and squatting on it would turn a
 misplaced agent flag into a silently ignored preference list.
 
+## Execute a complete goal
+
+```sh
+wan loop "Build the feature described in the spec" --file spec.md --budget 2h
+```
+
+`wan loop` interviews where needed, asks you to approve acceptance criteria and
+an overall budget, then coordinates short agent turns in tmux. It preserves work
+across provider changes and restarts, and requires independent verification of
+the complete goal. Code and non-code deliverables are supported. Merge,
+deployment, and other external actions require explicit authorization.
+
+See [the loop guide](docs/loop.md) for approval, progress, recovery, and plan formats.
+
 ## Install
 
 ```sh
