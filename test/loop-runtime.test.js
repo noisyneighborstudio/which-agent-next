@@ -124,6 +124,16 @@ test("a marker with a non-object or missing payload is a clear error", () => {
   assert.throws(() => parseAgentReport('WAN_RESULT ["a","b"]'), /not a JSON object/);
 });
 
+test("parseAgentReport: a marker quoted inside the report does not hide the report", () => {
+  // A stall diagnosis naturally quotes the marker it is diagnosing; the last
+  // occurrence is inside a JSON string with nothing parseable after it.
+  const report = { decision: "continue", findings: ["worker logs show SIGTERM at 295s with no WAN_RESULT, 9 attempts"], strategy: "split the slice" };
+  const text = "startup noise\nWAN_RESULT " + JSON.stringify(report) + "\n";
+  assert.equal(text.split("WAN_RESULT").length - 1, 2);
+  assert.deepEqual(parseAgentReport(text), report);
+});
+
+
 // ---------------------------------------------------------------------------
 // splitCommand
 // ---------------------------------------------------------------------------

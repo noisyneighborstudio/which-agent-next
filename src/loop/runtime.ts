@@ -893,15 +893,21 @@ export function parseAgentReport(text: string): Record<string, unknown> {
   if (typeof text !== "string" || !text.trim()) throw new Error("agent report is empty");
 
   // A marker is the strongest signal, but it can also appear *inside* a
-  // provider envelope's escaped string, where the bytes after it are not
-  // parseable JSON. Remember why the marker failed and keep looking.
+  // provider envelope's escaped string, or inside the report itself (a
+  // supervisor diagnosing "no WAN_RESULT across 9 attempts"), where the bytes
+  // after it are not a report. Try every occurrence, last first, and take the
+  // first one that is followed by a JSON object. Remember why the last marker
+  // failed and keep looking.
   let markerError: Error | undefined;
-  const marker = text.lastIndexOf(REPORT_MARKER);
-  if (marker >= 0) {
+  for (
+    let marker = text.lastIndexOf(REPORT_MARKER);
+    marker >= 0;
+    marker = marker > 0 ? text.lastIndexOf(REPORT_MARKER, marker - 1) : -1
+  ) {
     const raw = firstJsonAfter(text, marker + REPORT_MARKER.length);
     const rec = raw ? asRecord(raw) : undefined;
     if (rec) return unwrapEnvelope(rec) ?? rec;
-    markerError = new Error(
+    markerError ??= new Error(
       raw
         ? `${REPORT_MARKER} payload is not a JSON object: ${raw.slice(0, 200)}`
         : `found ${REPORT_MARKER} marker but no JSON object after it`,
