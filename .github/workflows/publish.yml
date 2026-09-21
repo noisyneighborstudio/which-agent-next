@@ -1,24 +1,29 @@
-name: Publish
+# Filename is load-bearing: npm's trusted publisher is bound to publish.yml.
+name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
 
 permissions:
-  contents: read
+  contents: write # release tags and GitHub releases
+  pull-requests: write # the release PR
   id-token: write # npm trusted publishing (OIDC); no token stored anywhere
 
 jobs:
-  publish:
+  release:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      # Version comes from conventional commits; see "Releasing" in README.
+      - id: rp
+        uses: googleapis/release-please-action@v4
+      # Publish here, not on the tag: tags pushed by GITHUB_TOKEN trigger no workflows.
+      - if: steps.rp.outputs.release_created
+        uses: actions/checkout@v5
+      - if: steps.rp.outputs.release_created
+        uses: actions/setup-node@v5
         with:
           node-version: 24 # ships npm 11, which trusted publishing needs
           registry-url: https://registry.npmjs.org
-      - name: Tag matches package.json
-        run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
-      - run: npm ci
-      - run: npm test
-      - run: npm publish
+      - if: steps.rp.outputs.release_created
+        run: npm ci && npm test && npm publish

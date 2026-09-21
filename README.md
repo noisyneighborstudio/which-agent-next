@@ -207,3 +207,20 @@ Exit codes: `0` picked, `3` nothing available, `2` bad usage.
 Probes run in parallel behind a timeout, so one hung CLI can't stall the
 answer. macOS only for Claude profile detection (it reads the Keychain);
 everything else is cross-platform.
+
+## Releasing
+
+Versions come from commit messages ([Conventional Commits](https://www.conventionalcommits.org)).
+Every push to `main` updates one open release PR with the next version and
+changelog; merging it tags, creates the GitHub release, and publishes to npm
+from CI (trusted publishing, no token).
+
+| Commit | Before 1.0 | From 1.0 |
+| --- | --- | --- |
+| `fix:` / `perf:` | patch | patch |
+| `feat:` | minor | minor |
+| `feat!:` or a `BREAKING CHANGE:` footer | minor | major |
+| `docs:` `test:` `ci:` `chore:` `refactor:` | no release | no release |
+
+A commit without a type is ignored by the release. Never run `npm version` or
+`npm publish` by hand.
