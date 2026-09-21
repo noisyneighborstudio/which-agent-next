@@ -1,6 +1,6 @@
 {
   "name": "@sethwebster/which-agent-next",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Inspect installed agent CLIs and their profiles, check how much usage each has left, and print the command to run the best one next.",
   "type": "module",
   "bin": {
