@@ -9,7 +9,10 @@ description: >-
   one. Use when dispatching or delegating a task to another agent CLI, when a
   run just failed on a rate limit, when deciding where to send heavy work, or
   when the user asks which agent or account to use, which has capacity left, or
-  how much quota is remaining. Drives the `which-agent-next` CLI over the shell.
+  how much quota is remaining. Also runs a whole multi-step goal across agents
+  with `wan loop` — use it when the user says "loop", "loop the issues", or asks
+  to pursue a goal to verified completion. Drives the `which-agent-next` CLI
+  over the shell.
 license: MIT
 ---
 
@@ -66,6 +69,32 @@ which-agent-next --run -- --json -p "review this"   # --json goes to the agent
 A bare agent flag placed *before* `--` is an error, not a silent no-op. There
 is no `-p` shorthand for `--prefer`, precisely because `-p` belongs to the
 agent.
+
+Never add self-approval flags yourself (`--permission-mode acceptEdits`,
+`--dangerously-skip-permissions`, `codex --full-auto`). A calling agent in
+Claude Code auto mode is blocked from spawning an agent that approves its own
+actions, and it should be. For work that needs edits across several steps,
+use `wan loop`: its adapters keep each provider's own permission review on
+(`claude --permission-mode auto`, `codex --approve-for-me`).
+
+## Running a whole goal: `wan loop`
+
+`wan loop` pursues a complete goal with separate workers, a fresh verifier,
+and a supervisor, in worktrees, under a shared time budget:
+
+```sh
+wan loop "fix the open issues" --budget 2h     # interview, user approves, start
+wan loop plan "goal" --budget 2h               # draft and interview only
+wan loop start --plan plan.json --approve --host-limits-accepted
+wan loop status <run> [--json]                 # evidence, obligations, budget
+wan loop stop <run> | resume <run> | attach <run>
+```
+
+The user approves the plan. Only pass `--approve` with a plan file the user
+has reviewed; never approve on their behalf. By default a run may not merge,
+deploy, publish, or buy capacity; a plan must grant `github:pr` explicitly to
+open PRs. It runs in tmux on this host, so sleep or reboot pauses it. See
+`docs/loop.md` in the repo for details.
 
 ## Reading the result
 
