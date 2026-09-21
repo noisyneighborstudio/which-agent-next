@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -841,13 +842,17 @@ function fixtureTools(name, email, login = BOT_GH_LOGIN) {
   return { ...defaultGitTools(), gitBot: [wrapper], gh: [fakeGh(login)] };
 }
 
+/** Only the developer's Mac has the alias; CI runners are macOS without it. */
+const HOST_BOT_ALIAS = process.platform === "darwin"
+  && spawnSync("git", ["config", "--get", "alias.dougbot"]).status === 0;
+
 /**
- * On macOS this is the *real* path: the host's `git dougbot` alias supplies
- * the identity and only gh is faked, because the developer's own gh login is
- * the personal one. Elsewhere there is no alias, so a fixture stands in.
+ * Where the host has it, this is the *real* path: the `git dougbot` alias
+ * supplies the identity and only gh is faked, because the developer's own gh
+ * login is the personal one. Elsewhere a fixture stands in for the alias.
  */
 function botTools(login = BOT_GH_LOGIN) {
-  if (process.platform === "darwin") return { ...defaultGitTools(), gh: [fakeGh(login)] };
+  if (HOST_BOT_ALIAS) return { ...defaultGitTools(), gh: [fakeGh(login)] };
   return fixtureTools(BOT_GIT_NAME, `${BOT_GIT_NAME}@users.noreply.github.com`, login);
 }
 
