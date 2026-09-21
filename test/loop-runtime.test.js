@@ -178,7 +178,7 @@ test("a planner is given no way to implement anything", async () => {
     assert.match(argv, /--tools Read,Glob,Grep,TodoWrite/, `${role} got a writable tool set`);
     assert.doesNotMatch(argv, /\bBash\b/, `${role} was given Bash`);
     assert.doesNotMatch(argv, /\b(Edit|Write|NotebookEdit)\b/, `${role} was given an editing tool`);
-    assert.match(argv, /--permission-prompts none/, `${role} could hang on a permission prompt`);
+    assert.match(argv, /--permission-mode dontAsk/, `${role} could hang on a permission prompt`);
     assert.match(argv, /--strict-mcp-config/, `${role} could pick tools back up from MCP`);
   }
 
@@ -229,6 +229,22 @@ test("the real installed claude advertises every flag its read-only role depends
   resetFlagCache();
   await assertAdapterFlags({ id: "claude", cli: "claude", command: bin }, "coordinator");
   await assertAdapterFlags({ id: "claude", cli: "claude", command: bin }, "worker");
+});
+
+test("Claude read-only roles run on builds without the optional permission-prompts flag", async () => {
+  const dir = tmp('claude-portable-permissions');
+  const seen = join(dir, 'argv.txt');
+  const help = CLAUDE_HELP.replace('  --permission-prompts <target>\\n', '');
+  const cli = fixtureCliWithHelp(dir, 'claude-default', help,
+    `printf '%s\\n' "$*" > ${JSON.stringify(seen)}; cat > /dev/null; echo 'WAN_RESULT {"ok":true}'`);
+  for (const role of ['planner', 'coordinator', 'verifier', 'supervisor']) {
+    const result = await invokeAgent({ provider: provider(cli), cwd: dir, prompt: 'Read only.', logPath: join(dir, role + '.log'), timeoutMs: 10000, role });
+    assert.equal(result.exitCode, 0);
+    const args = readFileSync(seen, 'utf8');
+    assert.match(args, /--permission-mode dontAsk/);
+    assert.doesNotMatch(args, /--permission-prompts|\bBash\b|\b(Edit|Write|NotebookEdit)\b/);
+    assert.match(args, /--tools Read,Glob,Grep,TodoWrite/);
+  }
 });
 
 // ---------------------------------------------------------------------------

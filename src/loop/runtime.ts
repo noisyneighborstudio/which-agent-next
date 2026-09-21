@@ -269,10 +269,9 @@ const ADAPTERS: Adapter[] = [
         ? [...CLAUDE_BASE, "--permission-mode", "acceptEdits", "--tools", CLAUDE_WRITE_TOOLS, "--allowedTools", CLAUDE_WRITE_TOOLS]
         : [
             ...CLAUDE_BASE,
-            "--permission-mode", "default",
-            // Nothing is on the other end of a prompt in a batch run; "none"
-            // denies anything that would ask instead of hanging on it.
-            "--permission-prompts", "none",
+            // dontAsk denies anything outside the explicit read-only allowlist
+            // without relying on the version-specific --permission-prompts flag.
+            "--permission-mode", "dontAsk",
             "--tools", CLAUDE_READ_TOOLS,
             "--allowedTools", CLAUDE_READ_TOOLS,
           ],
@@ -280,7 +279,7 @@ const ADAPTERS: Adapter[] = [
     requiredFlags: (role) =>
       isWriteRole(role)
         ? ["-p", "--output-format", "--strict-mcp-config", "--permission-mode", "--tools", "--allowedTools"]
-        : ["-p", "--output-format", "--strict-mcp-config", "--permission-mode", "--permission-prompts", "--tools", "--allowedTools"],
+        : ["-p", "--output-format", "--strict-mcp-config", "--permission-mode", "--tools", "--allowedTools"],
     unsupported: (role) => `claude has no configured argv for role "${role}"`,
   },
   {
