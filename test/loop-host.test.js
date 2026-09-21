@@ -32,6 +32,22 @@ test('process birth identity is available, not silently skipped', () => {
   assert.ok(processSignature(process.pid), 'ps permission is required to verify process ownership');
 });
 
+test('monitor inspects health at startup but waits one interval before agent supervision', async t => {
+  const dir = fixture(t); initialize(dir);
+  const { withRun } = await import('../dist/loop/state.js');
+  withRun(dir, s => { s.host = { pid: process.pid, signature: processSignature(process.pid), heartbeat: Date.now() }; s.settings.monitorMs = 600000; });
+  const marker = join(dir, 'assessment-called');
+  const module = new URL('../dist/loop/host.js', import.meta.url).href;
+  const code = `import {monitor} from ${JSON.stringify(module)}; import {writeFileSync} from 'node:fs'; await monitor(${JSON.stringify(dir)}, {assess: async () => {writeFileSync(${JSON.stringify(marker)}, 'called');}});`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: 'inherit' });
+  const exited = once(child, 'exit');
+  try {
+    await until(() => readRun(dir).supervisor.lastInspection !== undefined);
+    await sleep(150);
+    assert.equal(existsSync(marker), false, 'Startup consumed an agent turn before the first supervision interval');
+  } finally { child.kill('SIGTERM'); await exited; }
+});
+
 test('two independent controllers execute one durable job and reconciliation merges missing jobs', async t => {
   const dir = fixture(t);
   const command = 'echo ran >> executions; sleep 0.2; echo retained';

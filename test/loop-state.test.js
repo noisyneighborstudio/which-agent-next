@@ -515,3 +515,16 @@ test('live lock retry has a bounded two-second wait', t => {
   const elapsed = performance.now() - start;
   assert.ok(elapsed >= 1_900 && elapsed < 3_500, `elapsed ${elapsed}ms`);
 });
+
+test('a concurrent journal writer may finish publishing its lock owner before a retry', async t => {
+  const dir = directory(t); initializeRun(dir, run());
+  const lock = join(dir, '.state.lock');
+  const script = `const fs=require('node:fs');const path=require('node:path');const lock=process.argv[1];fs.mkdirSync(lock);process.send('created');setTimeout(()=>{fs.writeFileSync(path.join(lock,'writer.json'),JSON.stringify({pid:process.pid,timestamp:Date.now(),token:'writer'}));setTimeout(()=>{fs.unlinkSync(path.join(lock,'writer.json'));fs.rmdirSync(lock);},75);},75);`;
+  const child = spawn(process.execPath, ['-e', script, lock], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+  t.after(() => { if (child.exitCode === null) child.kill(); });
+  await once(child, 'message');
+  let calls = 0;
+  withRunRetry(dir, state => { calls++; state.supervisor.findings.push('lock publication recovered'); });
+  assert.equal(calls, 1);
+  assert.deepEqual(readRun(dir).supervisor.findings, ['lock publication recovered']);
+});

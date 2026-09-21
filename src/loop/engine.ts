@@ -453,6 +453,12 @@ async function controllerOwned(dir: string): Promise<void> {
           if (state.retryAt && Date.now() >= state.retryAt) mutate(dir, s => { s.status = 'RUNNING'; s.retryAt = undefined; });
           else { await sleep(1000); continue; }
         }
+        // A separate monitor may be assessing this run. Wait at the checkpoint
+        // instead of creating worker attempts that cannot reserve an invocation.
+        if (state.invocations.some(i => i.endedAt === undefined && i.role === 'supervisor')) {
+          await sleep(500);
+          continue;
+        }
         if (!await ensureAllocation(dir)) { await sleep(500); continue; }
         if (!active.size && !await diagnoseStalls(dir)) break;
         state = stateOf(dir);

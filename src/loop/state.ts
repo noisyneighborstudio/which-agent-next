@@ -340,6 +340,7 @@ export function isProcessAlive(pid: number): boolean {
 }
 
 class LiveLockError extends Error {}
+class InitializingLockError extends Error {}
 interface LockOwner { pid: number; timestamp: number; token: string }
 const LOCK = '.state.lock';
 function syncDirectory(dir: string): void {
@@ -353,13 +354,24 @@ function acquireLock(dir: string): () => void {
     try { mkdirSync(lockDir, { mode: 0o700 }); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      // Never expire a live PID by age. Unknown/partially written owners fail closed.
-      const files = readdirSync(lockDir);
+      // A creator publishes its owner just after mkdir. Wait briefly for that
+      // publication, but never reclaim a lock with an unknown owner.
+      let files: string[];
+      try { files = readdirSync(lockDir); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new InitializingLockError('Run lock changed before owner inspection'); throw error; }
+      if (files.length === 0) throw new InitializingLockError('Run lock has an incomplete owner during initialization');
       requireThat(files.length === 1, 'Run lock is busy or has an incomplete owner');
       const ownerPath = join(lockDir, files[0]);
       let previous: LockOwner;
-      try { previous = JSON.parse(readFileSync(ownerPath, 'utf8')) as LockOwner; }
-      catch { throw new Error('Run lock is busy or has an unreadable owner'); }
+      try {
+        const contents = readFileSync(ownerPath, 'utf8');
+        if (!contents) throw new InitializingLockError('Run lock owner is being written');
+        previous = JSON.parse(contents) as LockOwner;
+      } catch (error) {
+        if (error instanceof InitializingLockError) throw error;
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new InitializingLockError('Run lock was released during owner inspection');
+        throw new Error('Run lock is busy or has an unreadable owner');
+      }
       requireThat(nonempty(previous.token) && files[0] === `${previous.token}.json`
         && Number.isSafeInteger(previous.pid) && previous.pid > 0
         && Number.isFinite(previous.timestamp) && previous.timestamp >= 0 && previous.timestamp <= Date.now(), 'Invalid run lock owner');
@@ -515,16 +527,17 @@ export function initializeRun(dir: string, state: RunState): void {
 export function withRun<T>(dir: string, fn: (state: RunState) => T): T {
   return transact(dir, fn, acquireLock(dir));
 }
-/** Retry only confirmed live-owner contention, for at most two seconds. */
+/** Wait up to 250ms for owner publication, or two seconds for a known live owner. */
 export function withRunRetry<T>(dir: string, fn: (state: RunState) => T): T {
   const deadline = performance.now() + 2_000;
+  const initializingDeadline = performance.now() + 250;
   const sleeper = new Int32Array(new SharedArrayBuffer(4));
   let release: () => void;
   for (;;) {
     try { release = acquireLock(dir); break; }
     catch (error) {
-      const remaining = deadline - performance.now();
-      if (!(error instanceof LiveLockError) || remaining <= 0) throw error;
+      const remaining = (error instanceof InitializingLockError ? initializingDeadline : deadline) - performance.now();
+      if (!(error instanceof LiveLockError || error instanceof InitializingLockError) || remaining <= 0) throw error;
       Atomics.wait(sleeper, 0, 0, Math.min(25, remaining));
     }
   }

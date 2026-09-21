@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createRun, approveRun, initializeRun, extendBudget, readRun } from '../dist/loop/state.js';
+import { createRun, approveRun, initializeRun, extendBudget, readRun, reserveInvocation, finishInvocation } from '../dist/loop/state.js';
 import { shellQuote } from '../dist/util.js';
 import { DEFAULT_SETTINGS } from '../dist/loop/protocol.js';
 import { controller, stateOf, mutate } from '../dist/loop/engine.js';
@@ -78,6 +78,26 @@ test('whole-goal artifact run integrates two parallel workers and requires verif
   assert.ok(state.budget.usedMs > 0);
   assert.equal(state.evidence.filter(e => e.passed).length, 2);
   assert.ok(existsSync(join(dir, 'final-evidence.json')));
+});
+
+test('an independent supervisor holds a checkpoint without repeatedly inventing worker attempts', async t => {
+  const { dir } = fixture(t), agents = simulatedAgents(dir);
+  const select = agents.runtime.selectProvider;
+  let scheduled = false, attemptsDuringAssessment;
+  agents.runtime.selectProvider = async options => {
+    if (!scheduled) {
+      scheduled = true;
+      mutate(dir, s => reserveInvocation(s, { id: 'monitor-assessment', role: 'supervisor', provider: 'monitor-fixture', limitMs: 2000 }));
+      setTimeout(() => {
+        attemptsDuringAssessment = stateOf(dir).plan.tasks.map(t => t.attempts);
+        mutate(dir, s => finishInvocation(s, 'monitor-assessment', 'success'));
+      }, 1200);
+    }
+    return select(options);
+  };
+  await controller(dir, agents.runtime);
+  assert.ok(attemptsDuringAssessment.every(attempts => attempts <= 1), `Attempts grew while blocked by supervision: ${attemptsDuringAssessment}`);
+  assert.equal(stateOf(dir).status, 'READY_FOR_REVIEW');
 });
 
 test('a worker claiming completion of a half goal cannot finish; verification sends it back for repair', async t => {

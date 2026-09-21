@@ -93,14 +93,16 @@ export async function launchRun(dir: string, waitForWork = true, runtime: { comm
   throw new Error(diagnosis);
 }
 
-export async function monitor(dir: string): Promise<void> {
+export async function monitor(dir: string, options: { assess?: typeof supervisoryAssessment } = {}): Promise<void> {
   const release = mutate(dir, () => acquireLease(dir, 'monitor'));
   let server: Awaited<ReturnType<typeof serveDashboard>> | undefined;
   let running = true;
   let wake: (() => void) | undefined;
   const stop = () => { running = false; wake?.(); };
   process.once('SIGTERM', stop); process.once('SIGINT', stop);
-  let lastAssessment = 0;
+  // Process health is inspected immediately; the first agent assessment follows
+  // the configured interval so supervision does not occupy the startup slot.
+  let lastAssessment = Date.now();
   let keepAwake: ReturnType<typeof spawn> | undefined;
   try {
     server = await serveDashboard(dir);
@@ -130,7 +132,7 @@ export async function monitor(dir: string): Promise<void> {
       }
       if (running && !current.stopRequested && !['PAUSED', 'BUDGET_EXHAUSTED', 'READY_FOR_REVIEW', 'COMPLETE'].includes(current.status) && Date.now() - lastAssessment >= current.settings.monitorMs) {
         lastAssessment = Date.now();
-        try { await supervisoryAssessment(dir); }
+        try { await (options.assess ?? supervisoryAssessment)(dir); }
         catch (error) { mutate(dir, s => event(s, 'supervisor-error', String(error))); }
       }
       try { await publishProgress(dir); } catch (error) { mutate(dir, s => event(s, 'publication-error', String(error))); }
