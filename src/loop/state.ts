@@ -73,12 +73,13 @@ function unique(ids: string[], label: string): void {
   requireThat(ids.every(nonempty) && new Set(ids).size === ids.length, `Duplicate or empty ${label} id`);
 }
 function safeOwnership(path: string): boolean {
-  // Only portable relative paths and a terminal directory subtree glob are supported.
+  // Filename stars stay within one segment; a terminal ** owns a subtree.
   if (isAbsolute(path) || /[\\\x00-\x1f:]/.test(path)) return false;
   const segments = path.split('/');
   return segments.every((part, index) => part !== '' && part !== '.' && part !== '..'
     && part !== '.git' && part !== '.wan'
-    && (!/[?*\[\]{}!]/.test(part) || (part === '**' && index === segments.length - 1)));
+    && !/[?\[\]{}!]/.test(part)
+    && (!part.includes('**') || (part === '**' && index === segments.length - 1)));
 }
 
 export function validatePlan(plan: Plan): void {

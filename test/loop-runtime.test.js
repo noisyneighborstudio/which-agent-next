@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  adapterFor,
   BOT_GH_LOGIN,
   BOT_GIT_NAME,
   MAX_PATCH_BYTES,
@@ -168,28 +169,31 @@ test("planner and coordinator are first-class read-only roles", () => {
   assert.deepEqual(supportedRoles("codex"), ["worker", "planner", "verifier", "coordinator", "supervisor"]);
 });
 
-test("a planner is given no way to implement anything", async () => {
-  const dir = tmp("planner");
+test("all Claude roles delegate approvals to its native auto mode", async () => {
+  const dir = tmp("native-approval");
   const seen = join(dir, "argv.txt");
   const cli = fixtureCli(dir, "fake-claude", `printf '%s\\n' "$*" > ${JSON.stringify(seen)}; cat > /dev/null; echo ok`);
-  for (const role of ["planner", "coordinator", "verifier"]) {
-    await invokeAgent({ ...unverified, provider: provider(cli), cwd: dir, prompt: "plan it", logPath: join(dir, "l"), timeoutMs: 10_000, role });
+  for (const role of ROLES) {
+    await invokeAgent({ ...unverified, provider: provider(cli), cwd: dir, prompt: "Follow the approved role contract.", logPath: join(dir, "l"), timeoutMs: 10000, role });
     const argv = readFileSync(seen, "utf8");
-    assert.match(argv, /--tools Read,Glob,Grep,TodoWrite/, `${role} got a writable tool set`);
-    assert.doesNotMatch(argv, /\bBash\b/, `${role} was given Bash`);
-    assert.doesNotMatch(argv, /\b(Edit|Write|NotebookEdit)\b/, `${role} was given an editing tool`);
-    assert.match(argv, /--permission-mode dontAsk/, `${role} could hang on a permission prompt`);
-    assert.match(argv, /--strict-mcp-config/, `${role} could pick tools back up from MCP`);
+    assert.match(argv, /--permission-mode auto/);
+    assert.doesNotMatch(argv, /--tools|--allowedTools|--disallowedTools|--permission-prompts|--strict-mcp-config|bypass|dontAsk/);
   }
+});
 
-  await invokeAgent({ ...unverified, provider: provider(cli), cwd: dir, prompt: "do it", logPath: join(dir, "l"), timeoutMs: 10_000, role: "worker" });
-  assert.match(readFileSync(seen, "utf8"), /--tools Read,Glob,Grep,Edit,Write,NotebookEdit,TodoWrite/);
+test("all Codex roles delegate approvals to native automatic review", () => {
+  for (const role of ROLES) {
+    const args = adapterFor('codex').args(role);
+    assert.ok(args.includes('--approve-for-me'));
+    assert.ok(!args.includes('--sandbox'));
+    assert.ok(!args.some(arg => arg.includes('dangerously')));
+  }
 });
 
 test("adapters only claim what a verified flag can back", () => {
   // opencode run has no flag that removes write and shell tools.
-  assert.deepEqual(supportedRoles("opencode"), ["worker"]);
-  assert.match(unsupportedReason("opencode", "verifier"), /no verified permission flag/);
+  assert.deepEqual(supportedRoles("opencode"), [...ROLES]);
+  assert.equal(unsupportedReason("opencode", "verifier"), undefined);
   // gemini offers --yolo or an approval prompt nobody is there to answer.
   assert.deepEqual(supportedRoles("gemini"), []);
   assert.match(unsupportedReason("gemini", "worker"), /only --yolo/);
@@ -209,8 +213,8 @@ test("the flag audit reads the installed build's --help and refuses a build that
   const stale = fixtureCliWithHelp(dir, "stale-claude", "  -p, --print\\n  --output-format <format>", "echo hi");
   await assert.rejects(
     () => assertAdapterFlags(provider(stale), "verifier"),
-    /does not advertise .*--tools.*checked/s,
-    "a build without the tool-scoping flags must not be trusted read-only",
+    /does not advertise .*--permission-mode.*checked/s,
+    "a build without the native approval mode must be upgraded",
   );
 
   // invokeAgent performs the same audit by default.
@@ -241,9 +245,9 @@ test("Claude read-only roles run on builds without the optional permission-promp
     const result = await invokeAgent({ provider: provider(cli), cwd: dir, prompt: 'Read only.', logPath: join(dir, role + '.log'), timeoutMs: 10000, role });
     assert.equal(result.exitCode, 0);
     const args = readFileSync(seen, 'utf8');
-    assert.match(args, /--permission-mode dontAsk/);
+    assert.match(args, /--permission-mode auto/);
     assert.doesNotMatch(args, /--permission-prompts|\bBash\b|\b(Edit|Write|NotebookEdit)\b/);
-    assert.match(args, /--tools Read,Glob,Grep,TodoWrite/);
+    assert.doesNotMatch(args, /--tools|--allowedTools|--strict-mcp-config/);
   }
 });
 
@@ -485,10 +489,9 @@ test("unsupported CLIs and roles fail with a reason, never a guessed flag", asyn
     () => invokeAgent({ ...unverified, provider: provider("/bin/true", "gemini"), cwd: dir, prompt: "x", logPath: join(dir, "l"), timeoutMs: 1000, role: "worker" }),
     /gemini cannot run role "worker".*yolo/s,
   );
-  await assert.rejects(
-    () => invokeAgent({ ...unverified, provider: provider("/bin/true", "opencode"), cwd: dir, prompt: "x", logPath: join(dir, "l"), timeoutMs: 1000, role: "coordinator" }),
-    /opencode cannot run role "coordinator"/,
-  );
+  const opencode = fixtureCli(dir, 'opencode', 'cat > /dev/null; echo ok');
+  const delegated = await invokeAgent({ ...unverified, provider: provider(opencode, 'opencode'), cwd: dir, prompt: 'x', logPath: join(dir, 'l'), timeoutMs: 10000, role: 'coordinator' });
+  assert.equal(delegated.exitCode, 0, 'Provider-native permissions also apply to coordination');
   await assert.rejects(
     () => invokeAgent({ ...unverified, provider: provider("/bin/true", "claude"), cwd: dir, prompt: "x", logPath: join(dir, "l"), timeoutMs: 1000, role: "reviewer" }),
     /unknown role "reviewer"/,
@@ -619,7 +622,7 @@ test("role support filters the pool, including the read-only controller roles", 
   const ranked = [cand("gemini", "gemini", "plenty"), cand("opencode", "opencode", "plenty"), cand("codex", "codex", "ok")];
   for (const role of ["planner", "coordinator", "verifier"]) {
     const sel = await selectProvider({ decider: decider(ranked), role });
-    assert.equal(sel.provider.cli, "codex", `${role} must skip gemini and opencode`);
+    assert.equal(sel.provider.cli, "opencode", `${role} should use the eligible provider with its own policy`);
   }
   const worker = await selectProvider({ decider: decider(ranked), role: "worker" });
   assert.equal(worker.provider.cli, "opencode", "opencode is a supported worker");
@@ -992,6 +995,23 @@ test("integrateWorktree moves owned work, refuses everything else, and preserves
 
   // The same work cannot land twice: the target has now changed those files.
   await assert.rejects(() => integrateWorktree(target, worker, base, ["src/**", "package.json"], tools), /already changed/);
+});
+
+test('dirty input snapshot includes the brief and edits without changing the original index', async () => {
+  const source = await repo('dirty-input');
+  const tools = botTools(), base = await gitRevision(source, tools);
+  const target = join(tmp('dirty-copy'), 'integration');
+  await createWorktree(source, target, 'wan/input-snapshot', base, tools);
+  writeFileSync(join(source, 'BRIEF.md'), 'Implement every requirement in this brief.\n');
+  writeFileSync(join(source, 'src', 'base.ts'), 'export const base = 2;\n');
+  const before = await runCommand('git', ['-C', source, 'status', '--porcelain']);
+  const result = await integrateWorktree(target, source, base, ['**'], tools);
+  assert.equal(result.integrated, true);
+  assert.equal(readFileSync(join(target, 'BRIEF.md'), 'utf8'), 'Implement every requirement in this brief.\n');
+  assert.equal(readFileSync(join(target, 'src', 'base.ts'), 'utf8'), 'export const base = 2;\n');
+  assert.equal(await gitRevision(source, tools), base);
+  assert.equal((await runCommand('git', ['-C', source, 'status', '--porcelain'])).stdout, before.stdout);
+  assert.equal((await runCommand('git', ['-C', target, 'status', '--porcelain'])).stdout.trim(), '');
 });
 
 test("a target that moved on with disjoint earlier work still accepts this task", async () => {

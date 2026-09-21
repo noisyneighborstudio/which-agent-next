@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, lstatSync, existsSync, renameSync, mkdtempSync, rmdirSync } from 'node:fs';
 import { join, dirname, resolve, relative, sep, basename } from 'node:path';
 import { createHash } from 'node:crypto';
+import { pathAllowed } from './runtime.js';
 
 const SKIP = new Set(['.git', '.wan', 'node_modules']);
 export function inventory(root: string): Record<string, string> {
@@ -20,7 +21,7 @@ export function inventory(root: string): Record<string, string> {
 
 export function ownsPath(path: string, ownership: string[]): boolean {
   if (!path || path.startsWith('/') || path.split('/').includes('..') || path.includes('\\')) return false;
-  return ownership.some(pattern => pattern === '**' || pattern === path || (pattern.endsWith('/**') && path.startsWith(pattern.slice(0, -2))));
+  return pathAllowed(path, ownership);
 }
 
 function safeDestination(root: string, path: string): string {

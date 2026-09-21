@@ -83,7 +83,7 @@ The required plan fields are `goal`, `budgetMs`, `criteria`, `deliverables`, `pe
 }
 ```
 
-Paths in `ownership` are relative files or subtrees such as `src/**`. `**` owns the workspace, excluding controller and Git metadata. Dependencies refer to task IDs. Inputs stay in the original workspace; execution and deliverables use isolated directories in the run store.
+Paths in `ownership` are relative files, filename patterns such as `src/bottom-nav*`, or subtrees such as `src/**`. `**` owns the workspace, excluding controller and Git metadata. Dependencies refer to task IDs. For Git projects, wan snapshots existing tracked changes and non-ignored untracked inputs into the isolated branch. The original checkout and index remain unchanged. Execution and deliverables use isolated directories in the run store.
 
 External effects require explicit actions in the approved plan:
 
@@ -106,7 +106,7 @@ Verification commands must test the pinned source or artifact rather than repair
 
 ## Provider and platform limits
 
-The selector continues using wan's measured quota and preference rules. Missing quota remains unknown. Adapters check the installed CLI's required flags before invoking it. Claude and Codex support implementation and read-only planning/review roles. Other installed CLIs are eligible only for roles their adapters can support without a permission-bypass flag. Unsupported combinations are reported instead of guessed.
+The selector continues using wan's measured quota and preference rules. Missing quota remains unknown. Adapters check the installed CLI's required flags before invoking it. Claude uses `--permission-mode auto`; Codex uses `--approve-for-me`. Their native approval models decide tool permissions. wan does not inject tool allowlists, deny prompts, or replace provider MCP configuration. opencode keeps its configured permission handling for every role. Planning/review responsibilities remain in the role instructions, and candidate integrity is checked independently. Unsupported CLI invocations are reported instead of guessed.
 
 The host runtime targets macOS and Linux with Node 20+, tmux, and `ps`. Code writes require the configured `dougbot-agent` identity. On macOS, Git writes use `git dougbot`; GitHub writes activate and verify the bot account. wan never purchases extra capacity.
 

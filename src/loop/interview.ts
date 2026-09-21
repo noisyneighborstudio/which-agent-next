@@ -1,5 +1,5 @@
 import { createInterface } from 'node:readline/promises';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { stdin, stdout } from 'node:process';
 import { validatePlan, approveRun, type Plan } from './state.js';
@@ -47,15 +47,30 @@ function questionsFrom(value: unknown): Question[] {
   });
 }
 
-export async function draftPlan(dir: string): Promise<void> {
+export async function draftPlan(dir: string, planTurn: typeof runTurn = runTurn): Promise<void> {
   const state = stateOf(dir);
   if (state.approvedHash) throw new Error('Cannot replace an approved plan.');
-  const turn = await runTurn(dir, 'planner', plannerPrompt(state), state.cwd);
-  if (!turn?.report) throw new Error(turn?.error ?? 'No planning provider available. Draft and budget were preserved.');
-  const plan = object(turn.report.plan) as unknown as Plan;
+  const prompt = plannerPrompt(state);
+  let report: Record<string, unknown> | undefined;
+  // A valid agent response can outlive a validation/installation failure. Reuse
+  // it only for the exact same inputs; new interview answers require a new turn.
+  for (const invocation of [...state.invocations].reverse()) {
+    if (invocation.role !== 'planner' || invocation.outcome !== 'success') continue;
+    const promptPath = join(dir, 'logs', `${invocation.id}.prompt.txt`);
+    const reportPath = join(dir, 'logs', `${invocation.id}.report.json`);
+    if (existsSync(promptPath) && existsSync(reportPath) && readFileSync(promptPath, 'utf8') === prompt) {
+      report = object(JSON.parse(readFileSync(reportPath, 'utf8'))); break;
+    }
+  }
+  if (!report) {
+    const turn = await planTurn(dir, 'planner', prompt, state.cwd);
+    if (!turn?.report) throw new Error(turn?.error ?? 'No planning provider available. Draft and budget were preserved.');
+    report = turn.report;
+  }
+  const plan = object(report.plan) as unknown as Plan;
   if (plan.budgetMs !== state.budget.limitMs) throw new Error('Planner changed the authorized budget.');
   validatePlan(plan);
-  const questions = questionsFrom(turn.report.questions);
+  const questions = questionsFrom(report.questions);
   mutate(dir, s => {
     s.plan = plan; s.questions = questions; s.status = 'DRAFT';
     event(s, 'plan-drafted', `${plan.criteria.length} acceptance criteria; ${plan.tasks.length} assignments; user approval pending`);

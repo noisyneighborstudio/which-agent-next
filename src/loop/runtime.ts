@@ -233,7 +233,7 @@ export interface Provider {
 
 interface Adapter {
   cli: string;
-  /** Roles this CLI can run *safely* — i.e. without a skip-permissions flag. */
+  /** Roles supported by this CLI invocation. */
   roles: ReadonlySet<AgentRole>;
   /** Argv after the command itself, for a given role. */
   args(role: AgentRole): string[];
@@ -247,64 +247,37 @@ interface Adapter {
   unsupported(role: string): string;
 }
 
-/**
- * Claude's `--allowedTools` only *pre-approves* prompts; on its own it leaves
- * every other tool reachable. The tool surface itself is cut with `--tools`,
- * which selects from the built-in set — read-only roles therefore get no Bash
- * at all, rather than a Bash they merely aren't pre-approved for. MCP servers
- * could put the surface back, so they are switched off too.
- */
-const CLAUDE_WRITE_TOOLS = "Read,Glob,Grep,Edit,Write,NotebookEdit,TodoWrite";
-const CLAUDE_READ_TOOLS = "Read,Glob,Grep,TodoWrite";
-
-const CLAUDE_BASE = ["-p", "--output-format", "text", "--strict-mcp-config"];
-
 const ADAPTERS: Adapter[] = [
   {
     cli: "claude",
     roles: new Set<AgentRole>(ROLES),
     stdinPrompt: true,
-    args: (role) =>
-      isWriteRole(role)
-        ? [...CLAUDE_BASE, "--permission-mode", "acceptEdits", "--tools", CLAUDE_WRITE_TOOLS, "--allowedTools", CLAUDE_WRITE_TOOLS]
-        : [
-            ...CLAUDE_BASE,
-            // dontAsk denies anything outside the explicit read-only allowlist
-            // without relying on the version-specific --permission-prompts flag.
-            "--permission-mode", "dontAsk",
-            "--tools", CLAUDE_READ_TOOLS,
-            "--allowedTools", CLAUDE_READ_TOOLS,
-          ],
+    // The provider's model reviews permissions. Roles remain prompt contracts;
+    // wan does not replace the provider's tools, MCP configuration, or policy.
+    args: () => ["-p", "--output-format", "text", "--permission-mode", "auto"],
     helpArgs: () => ["--help"],
-    requiredFlags: (role) =>
-      isWriteRole(role)
-        ? ["-p", "--output-format", "--strict-mcp-config", "--permission-mode", "--tools", "--allowedTools"]
-        : ["-p", "--output-format", "--strict-mcp-config", "--permission-mode", "--tools", "--allowedTools"],
+    requiredFlags: () => ["-p", "--output-format", "--permission-mode"],
     unsupported: (role) => `claude has no configured argv for role "${role}"`,
   },
   {
     cli: "codex",
     roles: new Set<AgentRole>(ROLES),
     stdinPrompt: true,
-    // `-` makes codex exec read the prompt from stdin. The sandbox flag is the
-    // whole read-only story here, so it is verified against --help before use.
-    args: (role) => ["exec", "--color", "never", "--sandbox", isWriteRole(role) ? "workspace-write" : "read-only", "-"],
+    // Codex handles approval review and its sandbox through its native mode.
+    args: () => ["exec", "--color", "never", "--approve-for-me", "-"],
     helpArgs: () => ["exec", "--help"],
-    requiredFlags: () => ["--sandbox", "--color"],
+    requiredFlags: () => ["--approve-for-me", "--color"],
     unsupported: (role) => `codex has no configured argv for role "${role}"`,
   },
   {
     cli: "opencode",
-    // `opencode run` has no flag that demonstrably removes write and shell
-    // tools, so it is a worker or nothing. Claiming a read-only opencode on the
-    // strength of the prompt alone would be a claim we cannot back.
-    roles: new Set<AgentRole>(["worker"]),
+    // Keep opencode's own configured permission handling for every role.
+    roles: new Set<AgentRole>(ROLES),
     stdinPrompt: true,
     args: () => ["run"],
     helpArgs: () => ["run", "--help"],
     requiredFlags: () => [],
-    unsupported: (role) =>
-      `opencode cannot run role "${role}": "opencode run" exposes no verified permission flag that disables edits and shell, so it cannot be trusted read-only`,
+    unsupported: (role) => `opencode has no configured invocation for role "${role}"`,
   },
   {
     cli: "gemini",
@@ -326,7 +299,7 @@ export function adapterFor(cli: string): Adapter | undefined {
   return ADAPTERS.find((a) => a.cli === cli);
 }
 
-/** Roles a CLI can run without any dangerous flag. Empty when unsupported. */
+/** Roles supported by the configured provider invocation. */
 export function supportedRoles(cli: string): AgentRole[] {
   const roles = adapterFor(cli)?.roles;
   return roles ? ROLES.filter((r) => roles.has(r)) : [];
@@ -372,9 +345,8 @@ export function resetFlagCache(): void {
 }
 
 /**
- * Prove the installed CLI actually has the flags this role's safety depends
- * on. A read-only role whose sandbox flag has been renamed is not read-only,
- * and finding that out by running it is too late.
+ * Verify that the installed CLI accepts our invocation options. Tool approval
+ * decisions remain with the provider's native approval mode.
  */
 export async function assertAdapterFlags(provider: Provider, role: AgentRole, run: CommandRunner = runCommand): Promise<void> {
   const adapter = adapterFor(provider.cli);

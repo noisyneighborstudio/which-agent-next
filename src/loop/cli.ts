@@ -7,7 +7,7 @@ import { createRun, initializeRun, approveRun, extendBudget, assertApproved, rec
 import { DEFAULT_SETTINGS, duration, seedPlan, type LoopState } from './protocol.js';
 import { controller, stateOf, mutate, event } from './engine.js';
 import { interview, askBudget, applyPlanFile } from './interview.js';
-import { gitRevision, createWorktree, runCommand, processAlive } from './runtime.js';
+import { gitRevision, createWorktree, integrateWorktree, runCommand, processAlive } from './runtime.js';
 import { copyArtifacts } from './artifacts.js';
 import { ownsProcess } from './ownership.js';
 import { launchRun, monitor, hostService, installService } from './host.js';
@@ -94,15 +94,20 @@ function runDirectory(args: Args): string {
   return runs[0];
 }
 
-async function prepareWorkspace(dir: string): Promise<void> {
+export async function prepareWorkspace(dir: string, git = { gitRevision, createWorktree, integrateWorktree, runCommand }): Promise<void> {
   const state = stateOf(dir);
   if (state.git || state.answers.workspacePrepared) return;
   if (state.kind === 'code') {
-    const dirty = await runCommand('git', ['status', '--porcelain'], { cwd: state.cwd });
-    if (dirty.code || dirty.stdout.trim()) throw new Error('Input repository must be clean before preparing an isolated execution worktree. Existing changes were preserved.');
-    const base = await gitRevision(state.cwd), branch = `wan/loop-${state.id}`, cwd = join(dir, 'integration');
-    await createWorktree(state.cwd, cwd, branch, base);
-    mutate(dir, s => { s.cwd = cwd; s.git = { base, branch, remote: 'origin' }; s.answers.workspacePrepared = 'yes'; event(s, 'workspace', `Isolated worktree ${cwd} at ${base}`); });
+    const dirty = await git.runCommand('git', ['status', '--porcelain'], { cwd: state.cwd });
+    if (dirty.code) throw new Error(dirty.stderr || 'Could not inspect the input repository.');
+    const base = await git.gitRevision(state.cwd), branch = `wan/loop-${state.id}`, cwd = join(dir, 'integration');
+    await git.createWorktree(state.cwd, cwd, branch, base);
+    // Snapshot staged, unstaged and non-ignored untracked inputs only in the
+    // isolated branch. The user's checkout and index remain untouched.
+    const snapshot = dirty.stdout.trim()
+      ? (await git.integrateWorktree(cwd, state.cwd, base, ['**'])).revision
+      : base;
+    mutate(dir, s => { s.cwd = cwd; s.git = { base, branch, remote: 'origin' }; s.answers.workspacePrepared = 'yes'; event(s, 'workspace', `Isolated worktree ${cwd} at ${snapshot}; original checkout preserved`); });
   } else {
     const cwd = join(dir, 'deliverables');
     copyArtifacts(state.cwd, cwd);

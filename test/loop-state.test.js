@@ -58,11 +58,11 @@ test('drafts are isolated copies; expensive estimates block approval, not drafti
 });
 
 test('plan validation rejects cycles, dangling references, duplicate IDs and unsafe paths', () => {
-  for (const path of ['../escape', '/root/file', 'src/../../etc', 'C:/file', 'src\\file', 'src//file', 'src/*', '.git', '.wan', '.git/config', '.wan/**', 'src/.git/config', 'src/.wan/**', 'src/./file', 'src/\0file']) {
+  for (const path of ['../escape', '/root/file', 'src/../../etc', 'C:/file', 'src\\file', 'src//file', 'src/**bad', '.git', '.wan', '.git/config', '.wan/**', 'src/.git/config', 'src/.wan/**', 'src/./file', 'src/\0file']) {
     const p = plan(); p.tasks[0].ownership = [path];
     assert.throws(() => validatePlan(p), /ownership/, path);
   }
-  for (const path of ['**', 'src/**', 'src/file.ts', 'README.md']) {
+  for (const path of ['**', 'src/**', 'src/*', 'src/bottom-nav*', 'src/file.ts', 'README.md']) {
     const p = plan(); p.tasks[0].ownership = [path]; validatePlan(p);
   }
   const cyclic = plan();
