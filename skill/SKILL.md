@@ -4,7 +4,7 @@ description: >-
   Pick which AI coding agent CLI to hand work to next, based on how much usage
   quota each one actually has left. Inspects every agent CLI installed on the
   machine and every profile it is logged into (Claude Code profiles, Codex,
-  Grok, Gemini, Cursor, opencode, Muse, Ollama), reads real rate-limit data where the
+  Grok, Antigravity, Gemini, Cursor, opencode, Muse, Ollama), reads real rate-limit data where the
   CLI exposes it, and prints the command or a `<cli>|<profile>` id for the best
   one. Use when dispatching or delegating a task to another agent CLI, when a
   run just failed on a rate limit, when deciding where to send heavy work, or
@@ -96,7 +96,7 @@ it turns a guess into a fact:
   web, desktop app, and other machines.
 - **Codex** — a *cached snapshot* from its last request, labelled with its age
   (`as of 3h ago`). Real, but possibly stale.
-- **Grok, Gemini, Cursor, opencode, Muse** — no quota API exists. They report
+- **Grok, Antigravity, Gemini, Cursor, opencode, Muse** — no quota API exists. They report
   `unknown`. This means *unmeasured*, *not* "has plenty". Never describe an
   `unknown` agent as having quota available.
 - **Ollama** — local and unmetered; there is no quota to run out of.

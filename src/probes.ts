@@ -344,24 +344,61 @@ const grokProbe: Probe = {
   },
 };
 
+/**
+ * Gemini CLI. Google ended personal-account sign-in ("Code Assist for
+ * individuals") in favour of Antigravity, so a bare `oauth-personal` login no
+ * longer runs. An API key, Vertex, or a paid Code Assist project still does.
+ */
 const geminiProbe: Probe = {
   cli: "gemini",
   label: "Gemini CLI",
-  preference: 3,
+  preference: 4,
   async run() {
     if (!which("gemini")) return [];
     const dir = join(HOME, ".gemini");
-    const oauth = readJson<any>(join(dir, "oauth_creds.json"));
+    const settings = readJson<any>(join(dir, "settings.json"));
+    const authType: string | undefined = settings?.security?.auth?.selectedType ?? settings?.selectedAuthType;
     const hasKey = Boolean(process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY);
-    if (!oauth?.access_token && !hasKey)
+    const vertex = authType === "vertex-ai" || process.env.GOOGLE_GENAI_USE_VERTEXAI === "true";
+    const project = process.env.GOOGLE_CLOUD_PROJECT;
+    const oauth = readJson<any>(join(dir, "oauth_creds.json"))?.access_token;
+    const personal = !hasKey && !vertex && !project && (authType === "oauth-personal" || (!authType && oauth));
+    if (personal)
+      return [unavailable(
+        "gemini", "Gemini CLI", "gemini", "unauthenticated",
+        "Google ended personal sign-in — set GEMINI_API_KEY or use Antigravity (`agy`)",
+      )];
+    if (!hasKey && !vertex && !oauth && !authType)
       return [unavailable("gemini", "Gemini CLI", "gemini", "unauthenticated", "not logged in — run `gemini` and sign in")];
     const acct = readJson<any>(join(dir, "google_accounts.json"));
     const who = acct?.active ?? Object.keys(acct ?? {})[0];
+    const via = hasKey ? "API key"
+      : vertex ? "Vertex AI"
+      : project ? `Code Assist project ${project}${who ? ` as ${who}` : ""}`
+      : `${authType}${who ? ` as ${who}` : ""}`;
     return [{
       id: "gemini", cli: "gemini", label: "Gemini CLI", command: "gemini",
       state: "unknown",
       windows: [],
-      note: `${hasKey ? "API key" : `signed in${who ? ` as ${who}` : ""}`}; no quota API exposed`,
+      note: `${via}; no quota API exposed`,
+    }];
+  },
+};
+
+/**
+ * Antigravity CLI (`agy`), Google's replacement for personal Gemini CLI use.
+ * Its credentials sit where nothing here reads them, so presence is the signal.
+ */
+const antigravityProbe: Probe = {
+  cli: "agy",
+  label: "Antigravity",
+  preference: 3,
+  async run() {
+    if (!which("agy")) return [];
+    return [{
+      id: "agy", cli: "agy", label: "Antigravity", command: "agy",
+      state: "unknown", windows: [],
+      note: "installed; sign-in state and quota not exposed",
     }];
   },
 };
@@ -458,7 +495,7 @@ const ollamaProbe: Probe = {
 };
 
 export const PROBES: Probe[] = [
-  claudeProbe, codexProbe, grokProbe, geminiProbe, cursorProbe, opencodeProbe, museProbe, ollamaProbe,
+  claudeProbe, codexProbe, grokProbe, antigravityProbe, geminiProbe, cursorProbe, opencodeProbe, museProbe, ollamaProbe,
 ];
 
 export { until };
