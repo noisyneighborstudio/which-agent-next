@@ -1,12 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.XDG_CACHE_HOME = mkdtempSync(join(tmpdir(), "wan-cache-"));
 
-const { lastRateLimits, windowLabel } = await import("../dist/probes.js");
+const { lastRateLimits, windowLabel, PROBES } = await import("../dist/probes.js");
 const { readCache, writeCache } = await import("../dist/cache.js");
 
 test("lastRateLimits pulls the newest snapshot out of a rollout tail", () => {
@@ -48,4 +48,35 @@ test("a stale entry is still reachable inside the wider stale window", async () 
   assert.ok(entry && Date.now() - entry.at < 30 * 60_000);
   // …but not once it ages past that window.
   assert.equal(rc("old", -1), undefined);
+});
+
+test("muse reads its sign-in from auth.json and reports no quota", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "wan-muse-"));
+  writeFileSync(join(dir, "muse"), "#!/bin/sh\n");
+  chmodSync(join(dir, "muse"), 0o755);
+  const auth = join(dir, "auth.json");
+  const saved = { PATH: process.env.PATH, MUSE_AUTH_PATH: process.env.MUSE_AUTH_PATH, META_API_KEY: process.env.META_API_KEY };
+  process.env.PATH = `${dir}:${process.env.PATH}`;
+  process.env.MUSE_AUTH_PATH = auth;
+  delete process.env.META_API_KEY;
+  const muse = PROBES.find((p) => p.cli === "muse");
+  try {
+    let [c] = await muse.run({ cacheMs: 0, staleMs: 0 });
+    assert.equal(c.state, "unauthenticated");
+    assert.match(c.note, /muse login/);
+
+    writeFileSync(auth, JSON.stringify({ providers: { meta: { mechanism: "oauth", user_email: "a@b.c" } } }));
+    [c] = await muse.run({ cacheMs: 0, staleMs: 0 });
+    assert.equal(c.state, "unknown");
+    assert.equal(c.command, "muse");
+    assert.match(c.note, /signed in as a@b\.c; no quota API/);
+
+    writeFileSync(auth, "{}");
+    process.env.META_API_KEY = "k";
+    [c] = await muse.run({ cacheMs: 0, staleMs: 0 });
+    assert.equal(c.state, "unknown");
+    assert.match(c.note, /^API key/);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  }
 });

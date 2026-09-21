@@ -132,6 +132,7 @@ a CLI that publishes no quota is reported as `unknown`, not guessed at.
 | **Gemini CLI** | single | `~/.gemini/oauth_creds.json` / `GEMINI_API_KEY` — no quota API |
 | **Cursor Agent** | single | credential presence only (`cursor-agent status` would start an interactive login, so it is never invoked) |
 | **opencode** | single | configured providers from its `auth.json`; quota belongs to the upstream provider |
+| **Muse Code** | single | `~/.config/muse/auth.json` (or `MUSE_AUTH_PATH`) / `META_API_KEY` for sign-in state only — sessions log tokens, not quota |
 | **Ollama** | single | `/api/tags` on the local daemon — unmetered |
 
 Claude profiles are read sequentially and cached for 60s: the usage endpoint
@@ -158,7 +159,7 @@ window can't hide a nearly-spent weekly one.
 
 Within a tier, preference order decides — so a stronger agent is never demoted
 over a few percent of quota. Only a real tier gap moves the pick. Default order
-is `claude, codex, grok, gemini, cursor-agent, opencode, ollama`; override it
+is `claude, codex, grok, gemini, cursor-agent, opencode, muse, ollama`; override it
 with `--prefer`.
 
 `unknown` sits below everything measured and healthy and above anything nearly

@@ -237,8 +237,8 @@ interface Adapter {
   roles: ReadonlySet<AgentRole>;
   /** Argv after the command itself, for a given role. */
   args(role: AgentRole): string[];
-  /** True when the prompt is delivered on stdin rather than as an argument. */
-  stdinPrompt: boolean;
+  /** Flag that reads the prompt from a file. Absent means the prompt goes on stdin. */
+  promptFlag?: string;
   /** Argv that prints the help page covering `args(role)`. */
   helpArgs(role: AgentRole): string[];
   /** Flags `args()` relies on. Absent from `--help` means we refuse to run. */
@@ -251,7 +251,6 @@ const ADAPTERS: Adapter[] = [
   {
     cli: "claude",
     roles: new Set<AgentRole>(ROLES),
-    stdinPrompt: true,
     // The provider's model reviews permissions. Roles remain prompt contracts;
     // wan does not replace the provider's tools, MCP configuration, or policy.
     args: () => ["-p", "--output-format", "text", "--permission-mode", "auto"],
@@ -262,7 +261,6 @@ const ADAPTERS: Adapter[] = [
   {
     cli: "codex",
     roles: new Set<AgentRole>(ROLES),
-    stdinPrompt: true,
     // Codex handles approval review and its sandbox through its native mode.
     args: () => ["exec", "--color", "never", "--approve-for-me", "-"],
     helpArgs: () => ["exec", "--help"],
@@ -273,18 +271,27 @@ const ADAPTERS: Adapter[] = [
     cli: "opencode",
     // Keep opencode's own configured permission handling for every role.
     roles: new Set<AgentRole>(ROLES),
-    stdinPrompt: true,
     args: () => ["run"],
     helpArgs: () => ["run", "--help"],
     requiredFlags: () => [],
     unsupported: (role) => `opencode has no configured invocation for role "${role}"`,
   },
   {
+    cli: "muse",
+    roles: new Set<AgentRole>(ROLES),
+    // Its LLM approval judge reviews tool calls; the sandbox stays on. Nobody
+    // is there to answer a question, so those are cancelled, not left hanging.
+    args: () => ["exec", "--approval-judge", "on", "--user-input-auto-resolve"],
+    promptFlag: "--prompt-file",
+    helpArgs: () => ["exec", "--help"],
+    requiredFlags: () => ["--approval-judge", "--user-input-auto-resolve", "--prompt-file"],
+    unsupported: (role) => `muse has no configured argv for role "${role}"`,
+  },
+  {
     cli: "gemini",
     // Its non-interactive mode offers --yolo (all writes) or interactive
     // approval that nobody is present to give. Neither is a role we can run.
     roles: new Set<AgentRole>(),
-    stdinPrompt: true,
     args: () => [],
     helpArgs: () => ["--help"],
     requiredFlags: () => [],
@@ -605,7 +612,7 @@ class BoundedOutput {
 export function childEnv(base: NodeJS.ProcessEnv = process.env, extra: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base, ...extra };
   for (const key of Object.keys(env)) {
-    if (/^(CLAUDECODE|CLAUDE_CODE_(ENTRYPOINT|SSE_PORT|.*_PORT)|CODEX_SANDBOX.*|OPENCODE_(SESSION|SERVER).*|GEMINI_CLI_SESSION.*)$/.test(key)) {
+    if (/^(CLAUDECODE|CLAUDE_CODE_(ENTRYPOINT|SSE_PORT|.*_PORT)|CODEX_SANDBOX.*|OPENCODE_(SESSION|SERVER).*|GEMINI_CLI_SESSION.*|MUSE_(SESSION_ID|CURRENT_SESSION_LOG)|TBH_SESSION_MESSAGE_SOCKET)$/.test(key)) {
       delete env[key];
     }
   }
@@ -655,9 +662,11 @@ export async function invokeAgent(req: AgentRequest): Promise<AgentResult> {
 
   let argv = adapter.args(role);
   if (adapter.cli === 'codex' && !existsSync(join(req.cwd, '.git'))) argv = [...argv.slice(0, 1), '--skip-git-repo-check', ...argv.slice(1)];
-  const fullArgv = adapter.stdinPrompt ? argv : [...argv, req.prompt];
-
   mkdirSync(dirname(resolve(req.logPath)), { recursive: true, mode: 0o700 });
+  // A file, not an argument: prompts outgrow Linux's 128 KiB per-argument cap.
+  const promptPath = `${req.logPath}.prompt`;
+  if (adapter.promptFlag) writeFileSync(promptPath, req.prompt, { mode: 0o600 });
+  const fullArgv = adapter.promptFlag ? [...argv, adapter.promptFlag, resolve(promptPath)] : argv;
   // Open with an explicit restrictive mode: transcripts can hold secrets.
   const fd = openSync(req.logPath, "a", 0o600);
   const log = createWriteStream("", { fd, autoClose: true });
@@ -732,13 +741,13 @@ export async function invokeAgent(req: AgentRequest): Promise<AgentResult> {
     capture(child.stdout);
     capture(child.stderr);
 
-    if (adapter.stdinPrompt) {
+    if (adapter.promptFlag) {
+      child.stdin?.end();
+    } else {
       child.stdin?.on("error", () => {
         /* child may exit before reading the prompt */
       });
       child.stdin?.end(req.prompt);
-    } else {
-      child.stdin?.end();
     }
 
     const escalate = () => {

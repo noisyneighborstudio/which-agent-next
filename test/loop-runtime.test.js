@@ -190,6 +190,21 @@ test("all Codex roles delegate approvals to native automatic review", () => {
   }
 });
 
+test("muse gets its prompt from an owner-only file, with the approval judge on", async () => {
+  const dir = tmp("muse");
+  const seen = join(dir, "argv.txt");
+  // Echo back the prompt file's contents so the round trip is proven.
+  const cli = fixtureCli(dir, "fake-muse", `printf '%s\\n' "$*" > ${JSON.stringify(seen)}; while [ "$1" != --prompt-file ]; do shift; done; cat "$2"`);
+  const logPath = join(dir, "l");
+  const r = await invokeAgent({ ...unverified, provider: provider(cli, "muse"), cwd: dir, prompt: "the prompt", logPath, timeoutMs: 10000, role: "worker" });
+  assert.match(r.text, /the prompt/);
+  const argv = readFileSync(seen, "utf8");
+  assert.match(argv, /^exec --approval-judge on --user-input-auto-resolve --prompt-file \//);
+  assert.doesNotMatch(argv, /--yolo|--disable-approval|--disable-sandbox|the prompt/);
+  assert.equal(statSync(`${logPath}.prompt`).mode & 0o777, 0o600);
+  assert.deepEqual(supportedRoles("muse"), [...ROLES]);
+});
+
 test("adapters only claim what a verified flag can back", () => {
   // opencode run has no flag that removes write and shell tools.
   assert.deepEqual(supportedRoles("opencode"), [...ROLES]);
@@ -233,6 +248,14 @@ test("the real installed claude advertises every flag its read-only role depends
   resetFlagCache();
   await assertAdapterFlags({ id: "claude", cli: "claude", command: bin }, "coordinator");
   await assertAdapterFlags({ id: "claude", cli: "claude", command: bin }, "worker");
+});
+
+test("the real installed muse advertises every flag its adapter depends on", async (t) => {
+  const { which } = await import("../dist/util.js");
+  const bin = which("muse");
+  if (!bin) return t.skip("muse is not installed on this host");
+  resetFlagCache();
+  await assertAdapterFlags({ id: "muse", cli: "muse", command: bin }, "worker");
 });
 
 test("Claude read-only roles run on builds without the optional permission-prompts flag", async () => {
@@ -505,7 +528,9 @@ test("the timeout cap and soft checkpoint are the documented leash", () => {
 });
 
 test("child env drops nesting markers but keeps auth", () => {
-  const env = childEnv({ CLAUDECODE: "1", CLAUDE_CODE_ENTRYPOINT: "cli", ANTHROPIC_API_KEY: "secret", PATH: "/usr/bin" });
+  const env = childEnv({ CLAUDECODE: "1", CLAUDE_CODE_ENTRYPOINT: "cli", MUSE_SESSION_ID: "s", TBH_SESSION_MESSAGE_SOCKET: "/x", ANTHROPIC_API_KEY: "secret", PATH: "/usr/bin" });
+  assert.equal(env.MUSE_SESSION_ID, undefined);
+  assert.equal(env.TBH_SESSION_MESSAGE_SOCKET, undefined);
   assert.equal(env.CLAUDECODE, undefined);
   assert.equal(env.CLAUDE_CODE_ENTRYPOINT, undefined);
   assert.equal(env.ANTHROPIC_API_KEY, "secret", "existing CLI auth must survive");

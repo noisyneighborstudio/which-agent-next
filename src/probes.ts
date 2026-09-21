@@ -406,6 +406,32 @@ const opencodeProbe: Probe = {
   },
 };
 
+/**
+ * Muse Code (Meta). The Meta-account token lives in the keychain; auth.json
+ * only records who signed in. Sessions log token counts, never a quota.
+ */
+const museProbe: Probe = {
+  cli: "muse",
+  label: "Muse Code",
+  preference: 6,
+  async run() {
+    if (!which("muse")) return [];
+    const path = process.env.MUSE_AUTH_PATH
+      ?? join(process.env.XDG_CONFIG_HOME ?? join(HOME, ".config"), "muse", "auth.json");
+    const meta = readJson<any>(path)?.providers?.meta;
+    const hasKey = Boolean(process.env.META_API_KEY);
+    if (!meta && !hasKey)
+      return [unavailable("muse", "Muse Code", "muse", "unauthenticated", "not logged in — run `muse login`")];
+    const who = meta?.user_email;
+    return [{
+      id: "muse", cli: "muse", label: "Muse Code", command: "muse",
+      state: "unknown",
+      windows: [],
+      note: `${hasKey ? "API key" : `signed in${who ? ` as ${who}` : ""}`}; no quota API exposed`,
+    }];
+  },
+};
+
 /** Local models have no quota at all — the always-available last resort. */
 const ollamaProbe: Probe = {
   cli: "ollama",
@@ -432,7 +458,7 @@ const ollamaProbe: Probe = {
 };
 
 export const PROBES: Probe[] = [
-  claudeProbe, codexProbe, grokProbe, geminiProbe, cursorProbe, opencodeProbe, ollamaProbe,
+  claudeProbe, codexProbe, grokProbe, geminiProbe, cursorProbe, opencodeProbe, museProbe, ollamaProbe,
 ];
 
 export { until };
