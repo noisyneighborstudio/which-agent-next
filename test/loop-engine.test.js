@@ -31,13 +31,17 @@ function fixture(t, overrides = {}) {
 
 function simulatedAgents(dir, options = {}) {
   let activeWorkers = 0, peakWorkers = 0, calls = 0;
-  const roles = [], events = [];
+  const roles = [], events = [], recaps = [];
   const runtime = {
     async selectProvider(options) {
       if (options?.exclude?.includes('fake')) return { provider: { id: 'fallback', cli: 'codex', command: 'unused' }, reason: 'test fallback' };
       return { provider: { id: 'fake', cli: 'codex', command: 'unused' }, reason: 'simulated provider' };
     },
     async invokeAgent(req) {
+      if (req.role === 'recap') {
+        recaps.push(req.prompt);
+        return { exitCode: 0, signal: null, timedOut: false, elapsedMs: 5, text: `WAN_RESULT ${JSON.stringify({ recap: `recap ${recaps.length}` })}` };
+      }
       roles.push(req.role); calls++;
       let report;
       if (req.role === 'worker') {
@@ -63,7 +67,7 @@ function simulatedAgents(dir, options = {}) {
       return { exitCode: 0, signal: null, timedOut: false, elapsedMs: 20, text: `WAN_RESULT ${JSON.stringify(report)}` };
     },
   };
-  return { runtime, roles, events, peakWorkers: () => peakWorkers };
+  return { runtime, roles, events, recaps, peakWorkers: () => peakWorkers };
 }
 
 test('whole-goal artifact run integrates two parallel workers and requires verifier then supervisor', async t => {
@@ -78,6 +82,22 @@ test('whole-goal artifact run integrates two parallel workers and requires verif
   assert.ok(state.budget.usedMs > 0);
   assert.equal(state.evidence.filter(e => e.passed).length, 2);
   assert.ok(existsSync(join(dir, 'final-evidence.json')));
+});
+
+test('each turn tails the tape with a recap that is charged but uses no allocation slot', async t => {
+  const { dir } = fixture(t), agents = simulatedAgents(dir);
+  const log = t.mock.method(console, 'log', () => {});
+  await controller(dir, agents.runtime);
+  const state = stateOf(dir);
+  const tape = log.mock.calls.map(c => String(c.arguments[0]));
+  assert.equal(agents.recaps.length, agents.roles.length);
+  assert.equal(tape.length, agents.recaps.length);
+  assert.ok(tape.every(line => /^\[\d\d:\d\d:\d\d\] \w+( \w+)? \(fake\) — recap \d+$/.test(line)));
+  assert.match(tape.at(-1), /^\[[\d:]+\] supervisor \(fake\) — recap/);
+  const recaps = state.invocations.filter(i => i.role === 'recap');
+  assert.equal(recaps.length, agents.recaps.length);
+  assert.ok(recaps.every(i => i.reservedMs <= 60_000 && i.chargedMs !== undefined));
+  assert.equal(state.allocation.invocations, state.invocations.length - recaps.length);
 });
 
 test('an independent supervisor holds a checkpoint without repeatedly inventing worker attempts', async t => {
@@ -153,7 +173,7 @@ test('known quota exhaustion waits without spending agent budget', async t => {
   const state = stateOf(dir);
   assert.equal(state.status, 'READY_FOR_REVIEW');
   assert.ok(state.events.some(e => e.type === 'capacity'));
-  assert.equal(state.invocations.length, agents.roles.length);
+  assert.equal(state.invocations.length, agents.roles.length + agents.recaps.length);
 });
 
 test('unknown capacity pauses without a spend or imaginary retry deadline', async t => {

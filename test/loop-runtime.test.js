@@ -165,9 +165,17 @@ test("provider commands needing real shell semantics are rejected, not approxima
 // ---------------------------------------------------------------------------
 
 test("planner and coordinator are first-class read-only roles", () => {
-  assert.deepEqual([...ROLES], ["worker", "planner", "verifier", "coordinator", "supervisor"]);
-  assert.deepEqual(supportedRoles("claude"), ["worker", "planner", "verifier", "coordinator", "supervisor"]);
-  assert.deepEqual(supportedRoles("codex"), ["worker", "planner", "verifier", "coordinator", "supervisor"]);
+  assert.deepEqual([...ROLES], ["worker", "planner", "verifier", "coordinator", "supervisor", "recap"]);
+  assert.deepEqual(supportedRoles("claude"), [...ROLES]);
+  assert.deepEqual(supportedRoles("codex"), [...ROLES]);
+});
+
+test("recap runs on a low-effort model only where a verified flag selects one", () => {
+  assert.deepEqual(adapterFor("claude").args("recap").slice(-4), ["--model", "haiku", "--effort", "low"]);
+  assert.ok(!adapterFor("claude").args("worker").includes("--model"));
+  assert.deepEqual(adapterFor("codex").args("recap").slice(-3), ["-c", 'model_reasoning_effort="low"', "-"]);
+  assert.match(unsupportedReason("opencode", "recap"), /recap/);
+  assert.match(unsupportedReason("muse", "recap"), /recap/);
 });
 
 test("all Claude roles delegate approvals to its native auto mode", async () => {
@@ -203,12 +211,12 @@ test("muse gets its prompt from an owner-only file, with the approval judge on",
   assert.match(argv, /^exec --approval-judge on --user-input-auto-resolve --prompt-file \//);
   assert.doesNotMatch(argv, /--yolo|--disable-approval|--disable-sandbox|the prompt/);
   assert.equal(statSync(`${logPath}.prompt`).mode & 0o777, 0o600);
-  assert.deepEqual(supportedRoles("muse"), [...ROLES]);
+  assert.deepEqual(supportedRoles("muse"), ROLES.filter(r => r !== "recap"));
 });
 
 test("adapters only claim what a verified flag can back", () => {
   // opencode run has no flag that removes write and shell tools.
-  assert.deepEqual(supportedRoles("opencode"), [...ROLES]);
+  assert.deepEqual(supportedRoles("opencode"), ROLES.filter(r => r !== "recap"));
   assert.equal(unsupportedReason("opencode", "verifier"), undefined);
   // gemini offers --yolo or an approval prompt nobody is there to answer.
   assert.deepEqual(supportedRoles("gemini"), []);

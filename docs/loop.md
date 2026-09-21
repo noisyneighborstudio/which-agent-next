@@ -34,6 +34,8 @@ wan loop extend <run> --budget 4h
 wan loop dashboard <run>
 ```
 
+After each agent turn, the controller appends a timestamped recap to the end of its terminal output (`wan loop attach` or `controller.log`). The recap is one line saying where the run stands and what comes next. A low-effort model writes it: Claude `haiku` at `--effort low`, or Codex with `model_reasoning_effort="low"`. Each recap has a 60-second limit. Its time counts toward the budget, but it does not use an allocation invocation slot. If a recap can't run, the line says `recap unavailable` and gives the reason. Run status is not affected.
+
 `extend` authorizes a new total budget, not another allocation of that size. It preserves all usage. Draft extensions retain planning work and answers, while still requiring plan approval.
 
 Each invocation targets a three-minute checkpoint and has a five-minute hard deadline. The default is two workers. Code assignments use separate worktrees with explicit ownership and base revisions. Artifact assignments use isolated copies. The coordinator inspects actual changes before integration. Worker failures retain their partial work for reconciliation.

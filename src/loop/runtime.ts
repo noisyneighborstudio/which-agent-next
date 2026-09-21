@@ -205,7 +205,9 @@ export function splitCommand(command: string): string[] {
  * touch the workspace; a planner produces a plan and a coordinator inspects
  * and decides, and neither can implement anything even if it wanted to.
  */
-export const ROLES = ["worker", "planner", "verifier", "coordinator", "supervisor"] as const;
+export const ROLES = ["worker", "planner", "verifier", "coordinator", "supervisor", "recap"] as const;
+/** Roles every full-strength adapter serves; `recap` needs an explicit low-effort invocation. */
+const CORE_ROLES = ROLES.filter((r) => r !== "recap");
 export type AgentRole = (typeof ROLES)[number];
 
 /** Roles that may write to the workspace. Everything else runs read-only. */
@@ -253,24 +255,24 @@ const ADAPTERS: Adapter[] = [
     roles: new Set<AgentRole>(ROLES),
     // The provider's model reviews permissions. Roles remain prompt contracts;
     // wan does not replace the provider's tools, MCP configuration, or policy.
-    args: () => ["-p", "--output-format", "text", "--permission-mode", "auto"],
+    args: (role) => ["-p", "--output-format", "text", "--permission-mode", "auto", ...(role === "recap" ? ["--model", "haiku", "--effort", "low"] : [])],
     helpArgs: () => ["--help"],
-    requiredFlags: () => ["-p", "--output-format", "--permission-mode"],
+    requiredFlags: (role) => ["-p", "--output-format", "--permission-mode", ...(role === "recap" ? ["--model", "--effort"] : [])],
     unsupported: (role) => `claude has no configured argv for role "${role}"`,
   },
   {
     cli: "codex",
     roles: new Set<AgentRole>(ROLES),
     // Codex handles approval review and its sandbox through its native mode.
-    args: () => ["exec", "--color", "never", "--approve-for-me", "-"],
+    args: (role) => ["exec", "--color", "never", "--approve-for-me", ...(role === "recap" ? ["-c", 'model_reasoning_effort="low"'] : []), "-"],
     helpArgs: () => ["exec", "--help"],
-    requiredFlags: () => ["--approve-for-me", "--color"],
+    requiredFlags: (role) => ["--approve-for-me", "--color", ...(role === "recap" ? ["--config"] : [])],
     unsupported: (role) => `codex has no configured argv for role "${role}"`,
   },
   {
     cli: "opencode",
     // Keep opencode's own configured permission handling for every role.
-    roles: new Set<AgentRole>(ROLES),
+    roles: new Set<AgentRole>(CORE_ROLES),
     args: () => ["run"],
     helpArgs: () => ["run", "--help"],
     requiredFlags: () => [],
@@ -278,7 +280,7 @@ const ADAPTERS: Adapter[] = [
   },
   {
     cli: "muse",
-    roles: new Set<AgentRole>(ROLES),
+    roles: new Set<AgentRole>(CORE_ROLES),
     // Its LLM approval judge reviews tool calls; the sandbox stays on. Nobody
     // is there to answer a question, so those are cancelled, not left hanging.
     args: () => ["exec", "--approval-judge", "on", "--user-input-auto-resolve"],
