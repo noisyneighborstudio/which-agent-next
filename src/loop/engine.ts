@@ -8,7 +8,7 @@ import { type LoopState, type TestJob, rolePrompt, object, textField } from './p
 import { acquireLease, processSignature, ownsProcess } from './ownership.js';
 import { copyArtifacts, integrateArtifacts, inventory, ownsPath, recoverArtifactTransaction } from './artifacts.js';
 import { startJob, collectJob, stopJobs, reconcileJobs } from './jobs.js';
-import { publishProgress } from './progress.js';
+import { publishProgress, progressText } from './progress.js';
 
 export const stateOf = (dir: string): LoopState => readRun(dir) as LoopState;
 export function mutate<T>(dir: string, fn: (state: LoopState) => T): T { return withRunRetry(dir, state => fn(state as LoopState)); }
@@ -25,6 +25,8 @@ export async function runTurn(dir: string, role: Role, prompt: string, cwd: stri
   const blocked = Object.entries(state.failedProviders).filter(([, until]) => until > Date.now()).map(([id]) => id);
   const selection = await (engineRuntime.getStore()?.selectProvider ?? selectProvider)({ role, exclude: blocked, preferDifferentFrom: differentFrom });
   if (!selection.provider) {
+    // A missing narrator never changes run status.
+    if (role === 'recap') return undefined;
     const cooldown = Object.values(state.failedProviders).filter(until => until > Date.now());
     const retryAt = selection.retryAt ?? (cooldown.length ? Math.min(...cooldown) : undefined);
     mutate(dir, s => {
@@ -41,13 +43,14 @@ export async function runTurn(dir: string, role: Role, prompt: string, cwd: stri
     if (role === 'supervisor' ? active.length > 0 : active.some(i => i.role === 'supervisor')) return undefined;
     const available = s.budget.limitMs - s.budget.usedMs - active.reduce((n, i) => n + i.reservedMs, 0);
     const reserve = ['worker', 'coordinator'].includes(role) ? Math.min(2 * s.settings.invocationMs, s.budget.limitMs * 0.2) : 0;
-    const limitMs = Math.min(s.settings.invocationMs, available - reserve);
+    const limitMs = Math.min(role === 'recap' ? RECAP_MS : s.settings.invocationMs, available - reserve);
+    if (limitMs <= 0 && role === 'recap') return undefined;
     if (limitMs <= 0) {
       if (!active.length) { s.status = 'PAUSED'; s.supervisor.nextAction = 'Explicitly extend the overall budget to continue unfinished work.'; event(s, 'budget-reserve', 'Preserved remaining verification/supervision capacity.'); }
       return undefined;
     }
     // Keep one allocation slot for the supervisory renewal decision.
-    if (role !== 'supervisor' && s.allocation.invocations >= s.allocation.maxInvocations - 1) return undefined;
+    if (!['supervisor', 'recap'].includes(role) && s.allocation.invocations >= s.allocation.maxInvocations - 1) return undefined;
     const i = reserveInvocation(s, { role, provider: provider.id, taskId, limitMs });
     i.logPath = join(dir, 'logs', `${i.id}.log`);
     event(s, 'invocation', `${role} ${i.id} via ${provider.id}${taskId ? ` for ${taskId}` : ''}`);
@@ -78,15 +81,33 @@ export async function runTurn(dir: string, role: Role, prompt: string, cwd: stri
     else { try { report = parseAgentReport(result.text); } catch (error) { failure = (error as Error).message; } }
     mutate(dir, s => {
       finishInvocation(s, invocation.id, failure ? 'failed' : 'success');
-      if (result.exitCode !== 0 && !result.timedOut) s.failedProviders[provider.id] = Date.now() + 600_000;
+      if (result.exitCode !== 0 && !result.timedOut && role !== 'recap') s.failedProviders[provider.id] = Date.now() + 600_000;
       event(s, failure ? 'checkpoint-error' : 'checkpoint', `${role} ${invocation.id}: ${failure ?? JSON.stringify(report).slice(0, 3000)}`);
     });
     if (report) writeFileSync(join(dir, 'logs', `${invocation.id}.report.json`), JSON.stringify(report, null, 2), { mode: 0o600 });
-    return { id: invocation.id, provider: provider.id, report, error: failure, timedOut: result.timedOut };
+    const turn = { id: invocation.id, provider: provider.id, report, error: failure, timedOut: result.timedOut };
+    if (role !== 'recap' && role !== 'planner') await recap(dir, role, taskId, turn);
+    return turn;
   } catch (error) {
     mutate(dir, s => { finishInvocation(s, invocation.id, 'failed'); event(s, 'invocation-error', String(error)); });
     return { id: invocation.id, provider: provider.id, error: String(error) };
   } finally { clearInterval(timer); }
+}
+
+const RECAP_MS = 60_000;
+
+/** Tail the terminal tape with a low-effort, one-line "where we are" after each turn. */
+async function recap(dir: string, role: Role, taskId: string | undefined, turn: Turn): Promise<void> {
+  const state = stateOf(dir);
+  const result = await runTurn(dir, 'recap', `You narrate wan loop run ${state.id} for someone glancing at its terminal. Do not use tools or change anything.\n` +
+    `Just finished: ${role}${taskId ? ` for ${taskId}` : ''} via ${turn.provider}: ${turn.error ?? JSON.stringify(turn.report).slice(0, 3000)}\n` +
+    `Run progress:\n${progressText(state)}\n` +
+    'Return WAN_RESULT followed by {"recap":string}: one or two plain sentences, under 240 characters, saying where the run stands and what comes next. Report only what the progress shows.', state.cwd)
+    .catch((error: unknown): Partial<Turn> => ({ error: String(error) }));
+  const text = typeof result?.report?.recap === 'string' && result.report.recap.trim()
+    ? result.report.recap.trim().replace(/\s+/g, ' ')
+    : `recap unavailable${result?.error ? `: ${result.error.slice(0, 200)}` : ''}`;
+  console.log(`[${new Date().toISOString().slice(11, 19)}] ${role}${taskId ? ` ${taskId}` : ''} (${turn.provider}) — ${text}`);
 }
 
 async function revision(state: LoopState, cwd = state.cwd): Promise<string> {

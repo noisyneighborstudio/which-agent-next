@@ -6,7 +6,7 @@ import {
 import { isAbsolute, join } from 'node:path';
 
 export type RunStatus = 'DRAFT' | 'APPROVED' | 'RUNNING' | 'WAITING_QUOTA' | 'PAUSED' | 'BUDGET_EXHAUSTED' | 'READY_FOR_REVIEW' | 'COMPLETE';
-export type Role = 'planner' | 'coordinator' | 'worker' | 'verifier' | 'supervisor';
+export type Role = 'planner' | 'coordinator' | 'worker' | 'verifier' | 'supervisor' | 'recap';
 export interface Criterion { id: string; description: string; verification: string; phase?: 'deliverable' | 'outcome' }
 export interface AuthorizedAction { id: string; description: string; permission: string; command: string; verificationCommand: string }
 export interface Assignment {
@@ -52,7 +52,9 @@ export const MAX_ALLOCATION_INVOCATIONS = 24;
 export const MAX_ALLOCATION_MS = 7_200_000;
 const safeId = (id: unknown): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(id);
 const statuses: RunStatus[] = ['DRAFT', 'APPROVED', 'RUNNING', 'WAITING_QUOTA', 'PAUSED', 'BUDGET_EXHAUSTED', 'READY_FOR_REVIEW', 'COMPLETE'];
-const roles: Role[] = ['planner', 'coordinator', 'worker', 'verifier', 'supervisor'];
+const roles: Role[] = ['planner', 'coordinator', 'worker', 'verifier', 'supervisor', 'recap'];
+/** Recaps are charged time but never consume allocation invocation slots. */
+const slotted = (role: Role) => role !== 'recap';
 const terminal = (s: RunState): boolean => s.status === 'COMPLETE' || s.status === 'READY_FOR_REVIEW';
 const active = (s: RunState): Invocation[] => s.invocations.filter(i => i.endedAt === undefined);
 function requireThat(value: unknown, message: string): asserts value {
@@ -207,7 +209,7 @@ export function reserveInvocation(state: RunState, input: { id?: string; role: R
   requireThat(positive(limit), 'Invalid invocation time limit');
   const id = input.id ?? randomUUID();
   requireThat(nonempty(id) && !state.invocations.some(i => i.id === id), 'Duplicate or empty invocation id');
-  requireThat(state.allocation.invocations < Math.min(state.allocation.maxInvocations, MAX_ALLOCATION_INVOCATIONS), 'Allocation invocation limit reached; renew allocation');
+  requireThat(!slotted(input.role) || state.allocation.invocations < Math.min(state.allocation.maxInvocations, MAX_ALLOCATION_INVOCATIONS), 'Allocation invocation limit reached; renew allocation');
   const outstanding = active(state).reduce((sum, i) => sum + i.reservedMs, 0);
   const remaining = state.budget.limitMs - state.budget.usedMs - outstanding;
   const allocationRemaining = Math.min(state.allocation.maxMs, MAX_ALLOCATION_MS) - state.allocation.usedMs - outstanding;
@@ -218,7 +220,7 @@ export function reserveInvocation(state: RunState, input: { id?: string; role: R
     startedAt: now, deadline: now + reservedMs, reservedMs, allocationNumber: state.allocation.number,
     candidate: state.candidate };
   state.invocations.push(invocation);
-  state.allocation.invocations++;
+  if (slotted(input.role)) state.allocation.invocations++;
   if (!planning) state.status = 'RUNNING';
   event(state, 'invocation_reserved', id, now);
   return invocation;
@@ -413,7 +415,7 @@ function checkAccounting(state: RunState): void {
       && Number.isSafeInteger(invocation.allocationNumber) && invocation.allocationNumber! >= 1
       && invocation.allocationNumber! <= allocation.number, 'Invalid invocation accounting');
     const current = invocation.allocationNumber === allocation.number;
-    if (current) currentCount++;
+    if (current && slotted(invocation.role)) currentCount++;
     if (invocation.endedAt === undefined) {
       requireThat(current && invocation.chargedMs === undefined, 'Active invocation has invalid accounting');
       outstanding += invocation.reservedMs;
