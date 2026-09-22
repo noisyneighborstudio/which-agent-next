@@ -6,8 +6,13 @@ import type { TestJob } from './protocol.js';
 import { ownsProcess, hostId } from './ownership.js';
 
 const LAUNCH_GRACE_MS = 5000;
+/** How long an owner's renewal vouches for it. The wrapper renews on its 100ms
+ *  snapshot beat, so this tolerates ~300 missed beats. Read across machines it
+ *  assumes roughly synced clocks; a sleeping host outliving its lease is the
+ *  active-time clock problem, handled separately. */
+const LEASE_MS = 30_000;
 type Intent = TestJob & { cwd: string; generation: number };
-type Owner = { hostId?: string; pid: number; signature: string; token: string; members?: { hostId?: string; pid: number; signature: string }[] };
+type Owner = { hostId?: string; pid: number; signature: string; token: string; leaseUntil?: number; members?: { hostId?: string; pid: number; signature: string }[] };
 function read<T>(path: string): T | undefined {
   try { return JSON.parse(readFileSync(path, 'utf8')); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
@@ -41,6 +46,7 @@ let ended = false;
 const snapshot = () => {
   try {
     const rows = cp.execFileSync('ps', ['-axo', 'pid=,pgid=,lstart='], {encoding:'utf8'}).trim().split('\n');
+    owner.leaseUntil = Date.now() + Number(process.env.WAN_LEASE_MS);
     owner.members = rows.flatMap(row => { const m = row.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/); return m && +m[2] === process.pid ? [{hostId: owner.hostId, pid:+m[1], signature:m[3].trim()}] : []; });
     atomic('owner.json', owner);
   } catch {}
@@ -64,7 +70,7 @@ function launch(intent: Intent): void {
   if (existsSync(join(intent.directory, 'execution.json')) || existsSync(join(intent.directory, 'stop.json'))) return;
   const fd = openSync(join(intent.directory, 'output.log'), 'a', 0o600);
   try {
-    const child = spawn(process.execPath, ['-e', RUNNER, join(intent.directory, 'intent.json')], { cwd: intent.cwd, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, WAN_HOST_ID: hostId() } });
+    const child = spawn(process.execPath, ['-e', RUNNER, join(intent.directory, 'intent.json')], { cwd: intent.cwd, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, WAN_HOST_ID: hostId(), WAN_LEASE_MS: String(LEASE_MS) } });
     // An unsuccessful spawn leaves a recoverable intent; never overwrite another wrapper's result.
     child.on('error', () => {});
     child.unref();
@@ -110,9 +116,17 @@ export function collectJob(job: TestJob): TestJob {
 function groupOwner(job: TestJob): Owner | undefined {
   return read<Owner>(join(job.directory, 'owner.json')) ?? read<Owner>(join(job.directory, 'execution.json'));
 }
+/** A record this machine wrote, so its pids name our process table. */
+function local(owner?: { hostId?: string }): boolean {
+  return owner?.hostId === undefined || owner.hostId === hostId();
+}
+
 export function jobAlive(job: TestJob): boolean {
   const owner = groupOwner(job);
   if (!owner) return false;
+  // Another host's process table is unreadable from here, so a renewed lease is
+  // the only honest evidence its job still runs. Never infer it from a pid.
+  if (!local(owner)) return (owner.leaseUntil ?? 0) > Date.now();
   if (ownsProcess(owner)) return true;
   // A surviving member with the same birth identity authenticates the original group
   // after its leader exits. Never use the journal PID alone as kill authority.
@@ -127,12 +141,15 @@ export async function stopJobs(jobs: TestJob[]): Promise<void> {
   for (const job of jobs) {
     exclusive(join(job.directory, 'stop.json'), {at: Date.now()});
     const owner = groupOwner(job);
-    if (owner && jobAlive(job)) { try { process.kill(-owner.pid, 'SIGTERM'); } catch {} }
+    if (owner && local(owner) && jobAlive(job)) { try { process.kill(-owner.pid, 'SIGTERM'); } catch {} }
   }
   await new Promise(resolve => setTimeout(resolve, 300));
   for (const job of jobs) {
     const owner = groupOwner(job);
-    if (owner && jobAlive(job)) { try { process.kill(-owner.pid, 'SIGKILL'); } catch {} }
+    if (owner && local(owner) && jobAlive(job)) { try { process.kill(-owner.pid, 'SIGKILL'); } catch {} }
+    // Never fabricate an outcome for a job another host may still be running.
+    // stop.json is durable; that host enacts it and writes the real result.
+    if (owner && !local(owner) && jobAlive(job)) continue;
     if (!existsSync(join(job.directory, 'result.json'))) {
       const temp = join(job.directory, `result.${randomUUID()}`);
       writeFileSync(temp, JSON.stringify({candidate:job.candidate, exitCode:1, endedAt:Date.now(), signal:'SIGTERM'}), {mode:0o600});
