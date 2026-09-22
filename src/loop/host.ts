@@ -5,7 +5,7 @@ import { mkdirSync, readdirSync, existsSync, writeFileSync, readFileSync, unlink
 import { tmuxStart, tmuxAlive, runCommand, serviceDefinition } from './runtime.js';
 import { acquireLease, ownsProcess, processSignature, hostId } from './ownership.js';
 import { inspectRun, supervisoryAssessment, mutate, stateOf, event } from './engine.js';
-import { serveDashboard, publishProgress } from './progress.js';
+import { serveDashboard, recordProgress } from './progress.js';
 
 const cli = fileURLToPath(new URL('../cli.js', import.meta.url));
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -116,7 +116,7 @@ export async function monitor(dir: string, options: { assess?: typeof supervisor
       mutate(dir, s => { if (s.monitor) s.monitor.heartbeat = Date.now(); });
       const state = stateOf(dir);
       if (['READY_FOR_REVIEW', 'COMPLETE'].includes(state.status)) {
-        try { await publishProgress(dir); } catch (error) { mutate(dir, s => event(s, 'publication-error', String(error))); }
+        await recordProgress(dir);
         break; // Terminal progress remains available in preserved progress.html.
       }
       await inspectRun(dir);
@@ -135,7 +135,7 @@ export async function monitor(dir: string, options: { assess?: typeof supervisor
         try { await (options.assess ?? supervisoryAssessment)(dir); }
         catch (error) { mutate(dir, s => event(s, 'supervisor-error', String(error))); }
       }
-      try { await publishProgress(dir); } catch (error) { mutate(dir, s => event(s, 'publication-error', String(error))); }
+      await recordProgress(dir);
       if (running) await new Promise<void>(resolve => { const timer = setTimeout(resolve, 10_000); wake = () => { clearTimeout(timer); resolve(); }; });
     }
   } finally {
