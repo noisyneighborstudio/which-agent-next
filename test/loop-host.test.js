@@ -255,3 +255,44 @@ test('a job stamps the executing host, not the intent author', async t => {
   const owner = JSON.parse(readFileSync(join(job.directory,'owner.json'),'utf8'));
   assert.equal(owner.hostId, hostId());
 });
+
+// A job directory whose owner record claims to live on another machine.
+async function remoteJob(dir, owner) {
+  const { createHash } = await import('node:crypto');
+  const command = 'echo should-not-run >> executions';
+  const id = createHash('sha256').update(JSON.stringify(['candidate',command,0,dir,'test',null])).digest('hex');
+  const directory = join(dir,'jobs',id); mkdirSync(directory,{recursive:true});
+  const job = {kind:'test',id,directory,command,candidate:'candidate',generation:0,cwd:dir,pid:0,startedAt:Date.now()};
+  writeFileSync(join(directory,'intent.json'),JSON.stringify(job));
+  writeFileSync(join(directory,'owner.json'),JSON.stringify({hostId:'some-other-machine', pid:1234567, signature:'remote', token:'remote', ...owner}));
+  return job;
+}
+
+test('a remote job with a renewed lease is alive, and stop neither signals it nor invents its result', async t => {
+  const dir = fixture(t);
+  const job = await remoteJob(dir, {leaseUntil: Date.now() + 60_000});
+  assert.equal(jobAlive(job), true, 'a renewed lease is the evidence a remote job still runs');
+  assert.equal(collectJob(job).endedAt, undefined, 'a live remote job must not be marked finished');
+  await stopJobs([job]);
+  assert.equal(existsSync(join(job.directory,'stop.json')), true, 'the stop request must still be recorded for the owning host');
+  assert.equal(existsSync(join(job.directory,'result.json')), false, 'stop fabricated an outcome for a job another host is running');
+});
+
+test('a remote job whose lease lapsed is dead and is failed', async t => {
+  const dir = fixture(t);
+  const job = await remoteJob(dir, {leaseUntil: Date.now() - 1});
+  assert.equal(jobAlive(job), false);
+  await stopJobs([job]);
+  const result = JSON.parse(readFileSync(join(job.directory,'result.json'),'utf8'));
+  assert.equal(result.exitCode, 1);
+});
+
+test('a running job renews its lease', async t => {
+  const dir = fixture(t);
+  const job = startJob(dir, dir, 'sleep 1', 'candidate');
+  await until(() => existsSync(join(job.directory,'owner.json')) && JSON.parse(readFileSync(join(job.directory,'owner.json'),'utf8')).leaseUntil);
+  const first = JSON.parse(readFileSync(join(job.directory,'owner.json'),'utf8')).leaseUntil;
+  assert.ok(first > Date.now(), 'lease must extend into the future');
+  await until(() => JSON.parse(readFileSync(join(job.directory,'owner.json'),'utf8')).leaseUntil > first);
+  await until(() => collectJob(job).endedAt);
+});
