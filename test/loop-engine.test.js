@@ -241,6 +241,22 @@ test('verification commands cannot repair artifacts and certify the unchanged or
   assert.ok(!agents.roles.includes('verifier'));
 });
 
+test('verification commands run in order, each after the previous one finished', async t => {
+  // the second stage depends on the first: launched together it would fail
+  const marker = shellQuote(join(tmpdir(), `wan-built-${process.pid}-${Date.now()}`));
+  const { dir } = fixture(t, { verificationCommands: [`sleep 0.3 && touch ${marker}`, `test -f ${marker} && rm ${marker}`] });
+  await controller(dir, simulatedAgents(dir).runtime);
+  assert.equal(stateOf(dir).status, 'READY_FOR_REVIEW');
+});
+
+test('a failing verification command stops the commands after it', async t => {
+  const ran = join(tmpdir(), `wan-ran-${process.pid}-${Date.now()}`);
+  const { dir } = fixture(t, { verificationCommands: ['false', `touch ${shellQuote(ran)}`] });
+  await controller(dir, simulatedAgents(dir).runtime).catch(() => {});
+  assert.equal(existsSync(ran), false);
+  assert.notEqual(stateOf(dir).status, 'READY_FOR_REVIEW');
+});
+
 test('parallel scheduling preserves verification capacity atomically', async t => {
   const { dir } = fixture(t, { budgetMs: 1000 });
   const agents = simulatedAgents(dir), invoke = agents.runtime.invokeAgent;
