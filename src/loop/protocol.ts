@@ -24,6 +24,8 @@ export interface LoopState extends RunState {
   lastVerifier?: string;
   lastSupervisor?: string;
   failedProviders: Record<string, number>;
+  /** Last recorded publication outcome, so it is journalled once per change. */
+  publication?: string;
   pr?: { url: string; number: number; commentId?: number; lastBodyHash?: string; publishedCandidate?: string };
   git?: { base: string; branch: string; remote?: string };
   verification?: { candidate: string; baseline: string; directory: string; generation: number };

@@ -7,7 +7,7 @@ import { request } from 'node:http';
 import { spawnSync } from 'node:child_process';
 import { createRun, approveRun, initializeRun, readRun, withRun } from '../dist/loop/state.js';
 import { seedPlan, DEFAULT_SETTINGS } from '../dist/loop/protocol.js';
-import { publicationReady, publishProgress, serveDashboard } from '../dist/loop/progress.js';
+import { publicationReady, publishProgress, recordProgress, serveDashboard } from '../dist/loop/progress.js';
 
 function fixture(t, { approved = true, permission = true } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wan-progress-'));
@@ -140,7 +140,7 @@ test('approved permission remains an obligation without a candidate or code bran
   const dir = fixture(t);
   withRun(dir, state => { delete state.candidate; });
   assert.equal(publicationReady(readRun(dir)), false);
-  await assert.rejects(publishProgress(dir, { runCommand: async () => assert.fail('external call') }), /pinned candidate/);
+  assert.match(await publishProgress(dir, { runCommand: async () => assert.fail('external call') }), /pinned candidate/);
 });
 
 test('wrong bot identity prevents every write', async t => {
@@ -216,4 +216,24 @@ test('dashboard is loopback, read-only, escapes text and excludes raw logs and p
   for (const path of ['/../output.log', '/%2e%2e/output.log', '/output.log']) {
     assert.equal((await http(address.port, path)).status, 404);
   }
+});
+
+test('nothing to publish is journalled once per state change, not once per tick', async t => {
+  const dir = fixture(t);
+  const events = type => readRun(dir).events.filter(e => e.type === type).length;
+  const fail = { runCommand: async () => ({ code: 1, stdout: '', stderr: 'boom' }) };
+  const candidate = readRun(dir).candidate;
+
+  withRun(dir, state => { delete state.candidate; });
+  for (let tick = 0; tick < 5; tick++) await recordProgress(dir, fail);
+  assert.equal(events('publication-skipped'), 1, 'five idle ticks must journal one skip');
+  assert.equal(events('publication-error'), 0, 'having nothing to publish is not an error');
+
+  withRun(dir, state => { state.candidate = candidate; });
+  for (let tick = 0; tick < 3; tick++) await recordProgress(dir, fail);
+  assert.equal(events('publication-error'), 1, 'a repeated identical failure is journalled once');
+
+  withRun(dir, state => { delete state.candidate; });
+  await recordProgress(dir, fail);
+  assert.equal(events('publication-skipped'), 2, 'returning to the skipped state is a change and is journalled');
 });

@@ -8,7 +8,7 @@ import { type LoopState, type TestJob, rolePrompt, object, textField } from './p
 import { acquireLease, processSignature, ownsProcess, hostId } from './ownership.js';
 import { copyArtifacts, integrateArtifacts, inventory, ownsPath, recoverArtifactTransaction } from './artifacts.js';
 import { startJob, collectJob, stopJobs, reconcileJobs } from './jobs.js';
-import { publishProgress, progressText } from './progress.js';
+import { publishProgress, recordProgress, progressText } from './progress.js';
 
 export const stateOf = (dir: string): LoopState => readRun(dir) as LoopState;
 export function mutate<T>(dir: string, fn: (state: LoopState) => T): T { return withRunRetry(dir, state => fn(state as LoopState)); }
@@ -445,10 +445,7 @@ async function verificationObstacle(dir: string, key: string): Promise<boolean> 
   return true;
 }
 
-async function safeProgress(dir: string): Promise<void> {
-  try { await publishProgress(dir); }
-  catch (error) { mutate(dir, s => { const detail = `Progress publication failed: ${String(error)}`; if (s.events.at(-1)?.detail !== detail) event(s, 'publication-error', detail); }); }
-}
+async function safeProgress(dir: string): Promise<void> { await recordProgress(dir); }
 
 export async function controller(dir: string, runtime: EngineRuntime = {}): Promise<void> {
   return engineRuntime.run(runtime, () => controllerOwned(dir));

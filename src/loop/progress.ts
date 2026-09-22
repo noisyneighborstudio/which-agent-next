@@ -118,7 +118,29 @@ function publicationBody(state: LoopState): string {
   return `<!-- wan-loop:${state.id} -->\n\n${progressText(stable).split('\n').filter(line => !line.startsWith('Updated:') && !line.startsWith('Supervisor:')).join('\n')}`;
 }
 
-export async function publishProgress(dir: string, options: { runCommand?: typeof runCommand; gitTools?: GitTools } = {}): Promise<void> {
+type PublishOptions = { runCommand?: typeof runCommand; gitTools?: GitTools };
+
+/** Publish progress, journalling the outcome only when it changes. A run with no
+ *  branch or pinned candidate has nothing to publish yet: that is a state, not an
+ *  error, and journalling it on every monitor tick produced thousands of identical
+ *  events that buried the real ones. It is still recorded once, so a code run that
+ *  never gains a candidate says so rather than staying silently unpublished. */
+export async function recordProgress(dir: string, options: PublishOptions = {}): Promise<void> {
+  let status: string;
+  try { const skipped = await publishProgress(dir, options); status = skipped ? `skipped: ${skipped}` : 'ok'; }
+  catch (error) { status = `error: ${String(error)}`; }
+  // Steady state writes nothing; the authoritative comparison runs under the lock.
+  if ((readRun(dir) as LoopState).publication === status) return;
+  withRun(dir, raw => {
+    const s = raw as LoopState;
+    if (s.publication === status) return;
+    s.publication = status;
+    if (status !== 'ok') s.events.push({ at: Date.now(), type: status.startsWith('error') ? 'publication-error' : 'publication-skipped', detail: status });
+  });
+}
+
+/** Resolves with the reason when there is nothing to publish yet; throws on failure. */
+export async function publishProgress(dir: string, options: PublishOptions = {}): Promise<string | undefined> {
   const release = await acquirePublication(dir);
   const files: string[] = [];
   try {
@@ -126,7 +148,7 @@ export async function publishProgress(dir: string, options: { runCommand?: typeo
     writeFileSync(join(dir, 'progress.txt'), progressText(state) + '\n', { mode: 0o600 });
     writeFileSync(join(dir, 'progress.html'), renderDashboard(state), { mode: 0o600 });
     if (!authorized(state)) return;
-    if (state.kind !== 'code' || !state.git || !state.candidate) throw new Error('PR publication requires a code branch and pinned candidate.');
+    if (state.kind !== 'code' || !state.git || !state.candidate) return 'PR publication requires a code branch and pinned candidate.';
     const content = publicationBody(state);
     const digest = createHash('sha256').update(content).digest('hex');
     if (state.pr?.lastBodyHash === digest && publicationReady(state)) return;
