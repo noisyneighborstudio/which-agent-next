@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/noisyneighborstudio/which-agent-next/compare/v0.6.0...v0.6.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **loop:** never authenticate a process record from another host ([cc5181e](https://github.com/noisyneighborstudio/which-agent-next/commit/cc5181e22f838f269e0523d86a1facfa7bcb28e5))
+* **loop:** never authenticate a process record from another host ([8657daf](https://github.com/noisyneighborstudio/which-agent-next/commit/8657daf0eb46e64e051d39c0ad5172411311e4f3))
+
 ## [0.6.0](https://github.com/noisyneighborstudio/which-agent-next/compare/v0.5.1...v0.6.0) (2026-09-22)
 
 
