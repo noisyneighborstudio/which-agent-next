@@ -94,7 +94,12 @@ See [the loop guide](docs/loop.md) for approval, progress, recovery, and plan fo
 
 ```sh
 npm install -g @sethwebster/which-agent-next    # provides `which-agent-next` and `wan`
+wan upgrade                                     # later: install the latest release
 ```
+
+When a newer release exists, `wan` says so on stderr at most once a day, and
+only in a terminal — never in CI, pipes, or loop agents. Silence it with
+`NO_UPDATE_NOTIFIER=1`.
 
 Or run it without installing:
 
