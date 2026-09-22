@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { collect, configPath, decide, loadConfig } from "./index.js";
+import { collect, configPath, decide, loadConfig, probesFor, report } from "./index.js";
 import { shellQuote } from "./util.js";
 import { PROBES } from "./probes.js";
 import { agentId, rank } from "./rank.js";
@@ -116,9 +116,7 @@ async function main() {
   }
   const args = parse(process.argv.slice(2));
   const config = loadConfig(args.overrides);
-  const probes = args.only.length
-    ? PROBES.filter((p) => args.only.includes(p.cli))
-    : PROBES;
+  const probes = probesFor(args.only);
   if (!probes.length) fail(`--only matched no known CLI (have: ${PROBES.map((p) => p.cli).join(", ")})`);
 
   const { winner, ranked, reason } =
@@ -128,11 +126,7 @@ async function main() {
 
   switch (args.mode) {
     case "json":
-      console.log(JSON.stringify({
-        winner: winner ? { ...winner, agentId: agentId(winner) } : null,
-        reason: reason ?? null,
-        candidates: ranked.map((c) => ({ ...c, agentId: agentId(c) })),
-      }, null, 2));
+      console.log(JSON.stringify(report({ winner, ranked, reason }), null, 2));
       break;
     case "table":
       console.log(renderTable(ranked));
