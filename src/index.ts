@@ -1,13 +1,20 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { PROBES } from "./probes.js";
-import { pick, rank, reason, type Ranked } from "./rank.js";
+import { agentId, pick, rank, reason, type Ranked } from "./rank.js";
 import { DEFAULT_CONFIG, type Candidate, type Config, type Probe, type ProbeContext } from "./types.js";
 import { readJson, withTimeout } from "./util.js";
 
 export * from "./types.js";
 export { PROBES } from "./probes.js";
 export { rank, pick, reason, tierOf, tightest, agentId } from "./rank.js";
+
+export { VERSION } from "./update.js";
+
+/** Probes for the given CLI keys; every probe when none are given. */
+export function probesFor(only: string[]): Probe[] {
+  return only.length ? PROBES.filter((p) => only.includes(p.cli)) : PROBES;
+}
 
 export function configPath(): string {
   const base = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
@@ -49,4 +56,13 @@ export async function decide(config: Config, probes: Probe[] = PROBES): Promise<
   const ranked = rank(await collect(config, probes), probes, config);
   const winner = pick(ranked);
   return { winner, ranked, reason: winner ? reason(winner, ranked) : undefined };
+}
+
+/** The `--json` shape: every candidate tagged with its stable agentId. */
+export function report({ winner, ranked, reason }: Decision) {
+  return {
+    winner: winner ? { ...winner, agentId: agentId(winner) } : null,
+    reason: reason ?? null,
+    candidates: ranked.map((c) => ({ ...c, agentId: agentId(c) })),
+  };
 }

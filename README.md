@@ -93,7 +93,7 @@ See [the loop guide](docs/loop.md) for approval, progress, recovery, and plan fo
 ## Install
 
 ```sh
-npm install -g @sethwebster/which-agent-next    # provides `which-agent-next` and `wan`
+npm install -g @sethwebster/which-agent-next    # provides `which-agent-next`, `wan`, `which-agent-next-mcp`
 wan upgrade                                     # later: install the latest release
 ```
 
@@ -123,6 +123,38 @@ npx -p @sethwebster/which-agent-next which-agent-next-skill
 
 A skill is just a directory containing `SKILL.md`, so installing it is a copy;
 any harness that supports the format picks it up from its skills directory.
+
+### MCP server
+
+For harnesses that prefer tools to shell commands, `which-agent-next-mcp` is a
+stdio MCP server with two read-only tools:
+
+| Tool | Returns |
+| --- | --- |
+| `pick_agent` | `{ winner, reason, fallbacks }` — winner's `agentId`, `command`, `tier`, `headroom`, binding `window`; `null` winner when nothing has capacity |
+| `list_agents` | `{ winner, reason, candidates }` — every candidate, same shape as `--json` |
+
+Both accept `only`, `exclude`, `prefer`, `minHeadroom`, and `refresh`. They
+decide; they don't launch anything.
+
+```sh
+claude mcp add which-agent-next -- npx -y -p @sethwebster/which-agent-next which-agent-next-mcp
+```
+
+```json
+{
+  "mcpServers": {
+    "which-agent-next": {
+      "command": "npx",
+      "args": ["-y", "-p", "@sethwebster/which-agent-next", "which-agent-next-mcp"]
+    }
+  }
+}
+```
+
+With a global install, the command is just `which-agent-next-mcp`. Tool calls
+are handled one at a time so parallel calls reuse the quota cache instead of
+tripping the usage endpoint's rate limit.
 
 ## Where the numbers come from
 

@@ -11,14 +11,15 @@ description: >-
   when the user asks which agent or account to use, which has capacity left, or
   how much quota is remaining. Also runs a whole multi-step goal across agents
   with `wan loop` — use it when the user says "loop", "loop the issues", or asks
-  to pursue a goal to verified completion. Drives the `which-agent-next` CLI
-  over the shell.
+  to pursue a goal to verified completion. Uses the `pick_agent` / `list_agents`
+  MCP tools when the which-agent-next MCP server is connected, else the
+  `which-agent-next` CLI over the shell.
 license: MIT
 ---
 
 # which-agent-next
 
-Requires the CLI: `npm install -g @sethwebster/which-agent-next` (or prefix calls with `npx -y @sethwebster/which-agent-next`).
+The shell path requires the CLI: `npm install -g @sethwebster/which-agent-next` (or prefix calls with `npx -y @sethwebster/which-agent-next`). The MCP path needs only the server connected.
 
 `which-agent-next` (alias `wan`) answers one question: **of the agent CLIs on
 this machine, which one should get the next job?** It reads each CLI's real
@@ -26,7 +27,22 @@ quota where that exists, ranks them, and prints the winner.
 
 Use it before shelling out to another agent, not after one fails.
 
-## Invoking it
+## Via MCP, when connected
+
+If `pick_agent` and `list_agents` are in your tool list, use them instead of
+the shell — same decision, structured result, no output parsing.
+
+- `pick_agent` → `{ winner, reason, fallbacks }`. `winner` has `agentId`,
+  `command`, `tier`, `headroom`, and the binding `window`; it is `null` when
+  nothing has capacity. `fallbacks` is the rest of the chain, best first.
+- `list_agents` → `{ winner, reason, candidates }`, every candidate including
+  unusable ones with the reason. Same shape as `--json`.
+
+Both take `only`, `exclude`, `prefer`, `minHeadroom`, `refresh` — the flags
+below, as arrays/numbers/booleans. The tools only decide; run the winning
+`command` yourself.
+
+## Via the shell
 
 The default output is a bare command, so it composes directly:
 

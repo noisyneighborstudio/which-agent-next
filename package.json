@@ -6,6 +6,7 @@
   "bin": {
     "which-agent-next": "dist/cli.js",
     "wan": "dist/cli.js",
+    "which-agent-next-mcp": "dist/mcp.js",
     "which-agent-next-skill": "scripts/install-skill.mjs"
   },
   "main": "dist/index.js",
@@ -22,7 +23,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc && chmod +x dist/cli.js",
+    "build": "tsc && chmod +x dist/cli.js dist/mcp.js",
     "dev": "tsc --watch",
     "start": "node dist/cli.js",
     "test": "npm run build && node --test test/*.test.js",
@@ -37,6 +38,7 @@
     "codex",
     "dispatch",
     "grok",
+    "mcp",
     "quota",
     "rate-limit",
     "skill",
