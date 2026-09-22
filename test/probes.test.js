@@ -80,3 +80,49 @@ test("muse reads its sign-in from auth.json and reports no quota", async () => {
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   }
 });
+
+/** Runs one probe in a child with a throwaway HOME, since probes read it at import. */
+async function probeIn(cli, { settings, oauth, env = {} } = {}) {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdirSync } = await import("node:fs");
+  const home = mkdtempSync(join(tmpdir(), "wan-home-"));
+  const bin = join(home, "bin");
+  mkdirSync(join(home, ".gemini"), { recursive: true });
+  mkdirSync(bin);
+  writeFileSync(join(bin, cli), "#!/bin/sh\n");
+  chmodSync(join(bin, cli), 0o755);
+  if (settings) writeFileSync(join(home, ".gemini", "settings.json"), JSON.stringify(settings));
+  if (oauth) writeFileSync(join(home, ".gemini", "oauth_creds.json"), JSON.stringify({ access_token: "t" }));
+  const base = { ...process.env };
+  for (const k of ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_CLOUD_PROJECT"]) delete base[k];
+  const out = execFileSync(process.execPath, ["--input-type=module", "-e", `
+    const { PROBES } = await import(${JSON.stringify(new URL("../dist/probes.js", import.meta.url).href)});
+    const p = PROBES.find((p) => p.cli === ${JSON.stringify(cli)});
+    console.log(JSON.stringify(await p.run({ cacheMs: 0, staleMs: 0 })));
+  `], { env: { ...base, ...env, HOME: home, PATH: `${bin}:/usr/bin:/bin` } });
+  return JSON.parse(out)[0];
+}
+
+test("a personal Google sign-in to Gemini CLI is reported dead, pointing at Antigravity", async () => {
+  const c = await probeIn("gemini", { settings: { security: { auth: { selectedType: "oauth-personal" } } }, oauth: true });
+  assert.equal(c.state, "unauthenticated");
+  assert.match(c.note, /Antigravity/);
+  // Legacy config with only an OAuth token is the same personal login.
+  assert.equal((await probeIn("gemini", { oauth: true })).state, "unauthenticated");
+});
+
+test("Gemini CLI still counts with an API key, Vertex, or a Code Assist project", async () => {
+  const personal = { settings: { security: { auth: { selectedType: "oauth-personal" } } }, oauth: true };
+  assert.match((await probeIn("gemini", { ...personal, env: { GEMINI_API_KEY: "k" } })).note, /API key/);
+  assert.match((await probeIn("gemini", { settings: { security: { auth: { selectedType: "vertex-ai" } } } })).note, /Vertex/);
+  const paid = await probeIn("gemini", { ...personal, env: { GOOGLE_CLOUD_PROJECT: "acme" } });
+  assert.equal(paid.state, "unknown");
+  assert.match(paid.note, /Code Assist project acme/);
+  assert.match((await probeIn("gemini")).note, /not logged in/);
+});
+
+test("Antigravity is listed when agy is installed, with no quota claimed", async () => {
+  const c = await probeIn("agy");
+  assert.equal(c.command, "agy");
+  assert.equal(c.state, "unknown");
+});

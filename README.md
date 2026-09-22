@@ -15,7 +15,7 @@ $ which-agent-next --explain
 AGENT                 TIER     LEFT  WINDOWS         RESETS  COMMAND                          NOTE
 Claude Code (ExpoIO)  ok       32%   5h 3% · 7d 68%  in 3d   claude-expoio
 Grok                  unknown  –     –               –       grok                             signed in; no quota API exposed
-Gemini CLI            unknown  –     –               –       gemini                           signed in; no quota API exposed
+Antigravity           unknown  –     –               –       agy                              installed; sign-in state and quota not exposed
 opencode              unknown  –     –               –       opencode                         providers: openai, google, xai
 Codex                 low      9%    7d 91%          in 3d   codex                            plan pro, as of 3h ago
 Ollama (local)        local    –     –               –       ollama run qwen3:8b              11 local models, no quota
@@ -43,7 +43,7 @@ claude|Default
 
 $ wan --id --all          # the whole fallback chain, best first
 claude|Default
-gemini
+agy
 opencode
 codex
 ollama
@@ -166,7 +166,8 @@ a CLI that publishes no quota is reported as `unknown`, not guessed at.
 | **Claude Code** | one per `~/.claude-profiles` entry | live `api.anthropic.com/api/oauth/usage` per profile token — the same endpoint `/usage` reads, so it counts web and desktop usage too |
 | **Codex** | single | the `rate_limits` snapshot Codex writes into its newest session rollout; reported with its age (`as of 3h ago`) |
 | **Grok** | single | `~/.grok/auth.json` for sign-in state only — no quota API |
-| **Gemini CLI** | single | `~/.gemini/oauth_creds.json` / `GEMINI_API_KEY` — no quota API |
+| **Antigravity** | single | `agy` on `PATH` only — credentials and quota not exposed |
+| **Gemini CLI** | single | `~/.gemini/settings.json` auth type / `GEMINI_API_KEY` / Vertex / `GOOGLE_CLOUD_PROJECT` — no quota API. A personal Google sign-in is reported `unauthenticated`: Google moved individuals to Antigravity |
 | **Cursor Agent** | single | credential presence only (`cursor-agent status` would start an interactive login, so it is never invoked) |
 | **opencode** | single | configured providers from its `auth.json`; quota belongs to the upstream provider |
 | **Muse Code** | single | `~/.config/muse/auth.json` (or `MUSE_AUTH_PATH`) / `META_API_KEY` for sign-in state only — sessions log tokens, not quota |
@@ -196,7 +197,7 @@ window can't hide a nearly-spent weekly one.
 
 Within a tier, preference order decides — so a stronger agent is never demoted
 over a few percent of quota. Only a real tier gap moves the pick. Default order
-is `claude, codex, grok, gemini, cursor-agent, opencode, muse, ollama`; override it
+is `claude, codex, grok, agy, gemini, cursor-agent, opencode, muse, ollama`; override it
 with `--prefer`.
 
 `unknown` sits below everything measured and healthy and above anything nearly
