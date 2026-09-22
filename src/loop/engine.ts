@@ -304,16 +304,22 @@ async function verify(dir: string): Promise<void> {
   state = stateOf(dir);
   mutate(dir, s => { s.jobs = reconcileJobs(dir, s.jobs); });
   state = stateOf(dir);
+  mutate(dir, s => { s.jobs = s.jobs.map(collectJob); });
+  state = stateOf(dir);
+  // One at a time, in order, stopping at the first failure -- a shell `&&` chain. Plans list
+  // stages that share state (build, start, test, teardown); launched together, every stage
+  // after the first fails on a precondition that simply has not happened yet.
   for (const command of state.plan.verificationCommands) {
     const previous = state.jobs.filter(j => j.kind === 'test' && j.candidate === candidate && j.command === command).at(-1);
     if (!previous || !previous.endedAt && previous.pid === 0) {
       // startJob's durable intent and execution claim make crash recovery idempotent.
       const job = startJob(dir, checkDir, command, candidate, state.verification?.generation ?? 0);
       mutate(dir, s => { s.jobs = reconcileJobs(dir, s.jobs); event(s, 'test-start', `${job.id}: ${command}`); });
+      return;
     }
+    if (!previous.endedAt) return;
+    if (previous.exitCode !== 0) break;
   }
-  mutate(dir, s => { s.jobs = s.jobs.map(collectJob); });
-  state = stateOf(dir);
   const jobs = state.jobs.filter(j => j.candidate === candidate && j.kind === 'test');
   if (jobs.some(j => !j.endedAt)) return;
   await verificationIntegrity(state, checkDir, candidate, baseline);
