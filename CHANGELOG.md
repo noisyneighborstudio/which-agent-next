@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/noisyneighborstudio/which-agent-next/compare/v0.5.1...v0.6.0) (2026-09-22)
+
+
+### Features
+
+* expose the picker over MCP (stdio) ([a787090](https://github.com/noisyneighborstudio/which-agent-next/commit/a787090119b9e5948f34c7c2979d405488ce7c08))
+
 ## [0.5.1](https://github.com/noisyneighborstudio/which-agent-next/compare/v0.5.0...v0.5.1) (2026-09-22)
 
 
