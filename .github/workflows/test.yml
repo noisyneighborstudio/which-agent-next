@@ -1,0 +1,27 @@
+name: Test
+
+on:
+  pull_request:
+  # Release runs cover main via publish.yml, but only when a release is cut.
+  # Every other merge would otherwise reach main with no suite run at all.
+  push:
+    branches: [main]
+
+# A newer push supersedes an in-flight run for the same ref.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # macOS, not ubuntu: the job ownership suite authenticates processes by birth
+    # time via `ps -o lstart=` and reads process groups with BSD-style `ps -axo`.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24 # matches publish.yml
+          cache: npm
+      - run: npm ci
+      - run: npm test
