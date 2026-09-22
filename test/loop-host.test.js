@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import { startJob, collectJob, reconcileJobs, jobAlive, stopJobs } from '../dist/loop/jobs.js';
 import { startPane, launchRun } from '../dist/loop/host.js';
 import { createRun, initializeRun, approveRun, readRun } from '../dist/loop/state.js';
-import { processSignature } from '../dist/loop/ownership.js';
+import { processSignature, acquireLease } from '../dist/loop/ownership.js';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn, limit = 5000) {
@@ -153,4 +153,68 @@ test('startup timeout journals no useful work before diagnosis and reports failu
     assert.equal(readRun(dir).events.at(-1).type,'startup-no-work'); diagnosed=true;
   }}),/No useful work confirmed/);
   assert.equal(diagnosed,true);
+});
+
+
+// A live process whose stat is not a zombie. `ps -o lstart=` still answers for a
+// reaped-but-unwaited child, so birth identity alone cannot prove liveness here.
+const running = pid => {
+  try { return !/^Z/.test(execFileSync('ps',['-p',String(pid),'-o','stat='],{encoding:'utf8'}).trim()); }
+  catch { return false; }
+};
+
+test('a job whose owner fails birth authentication is never signalled', async t => {
+  const dir = fixture(t);
+  // Detached, so it leads its own process group: an unguarded process.kill(-pid)
+  // would actually reach it. A non-leader would survive by accident and pass vacuously.
+  const bystander = spawn(process.execPath, ['-e','setInterval(()=>{},1000)'], {detached:true, stdio:'ignore'});
+  bystander.unref();
+  t.after(() => { try { process.kill(-bystander.pid,'SIGKILL'); } catch {} });
+  await until(() => processSignature(bystander.pid));
+
+  const { createHash } = await import('node:crypto');
+  const command = 'echo should-not-run >> executions';
+  const id = createHash('sha256').update(JSON.stringify(['candidate',command,0,dir,'test',null])).digest('hex');
+  const directory = join(dir,'jobs',id); mkdirSync(directory,{recursive:true});
+  const job = {kind:'test',id,directory,command,candidate:'candidate',generation:0,cwd:dir,pid:0,startedAt:Date.now()};
+  writeFileSync(join(directory,'intent.json'),JSON.stringify(job));
+  // An owner record naming a live pid it did not start: a recycled pid locally,
+  // and every foreign pid once jobs may be owned by another host.
+  writeFileSync(join(directory,'owner.json'),JSON.stringify({pid:bystander.pid, signature:'not-its-birth-time', token:'stale'}));
+
+  assert.equal(jobAlive(job), false, 'mismatched birth identity must not authenticate an owner');
+  await stopJobs([job]);
+
+  assert.equal(running(bystander.pid), true, 'stopJobs signalled a process group it never started');
+  assert.equal(existsSync(join(dir,'executions')), false);
+  const result = JSON.parse(readFileSync(join(directory,'result.json'),'utf8'));
+  assert.equal(result.exitCode, 1, 'an unauthenticated owner must be failed, not left running');
+  assert.equal(result.candidate, 'candidate');
+});
+
+test('evidence from a different candidate is rejected, not attributed', async t => {
+  const dir = fixture(t);
+  const { createHash } = await import('node:crypto');
+  const command = 'echo irrelevant';
+  const id = createHash('sha256').update(JSON.stringify(['candidate-one',command,0,dir,'test',null])).digest('hex');
+  const directory = join(dir,'jobs',id); mkdirSync(directory,{recursive:true});
+  const job = {kind:'test',id,directory,command,candidate:'candidate-one',generation:0,cwd:dir,pid:0,startedAt:Date.now()};
+  writeFileSync(join(directory,'intent.json'),JSON.stringify(job));
+  writeFileSync(join(directory,'result.json'),JSON.stringify({candidate:'candidate-two',exitCode:0,endedAt:Date.now()}));
+  assert.throws(() => collectJob(job), /Invalid verification result/);
+  // Removed before teardown: reconcileJobs maps collectJob over every job, so one
+  // poisoned result currently throws for the whole batch rather than quarantining itself.
+  rmSync(directory, {recursive:true, force:true});
+});
+
+test('a lease is refused rather than stolen, and release is token-guarded', async t => {
+  const dir = fixture(t);
+  const release = acquireLease(dir, 'probe');
+  const leasePath = join(dir, 'probe.lease');
+  assert.equal(existsSync(leasePath), true);
+  assert.throws(() => acquireLease(dir, 'probe'), /already owns/);
+  // Someone else holds it by the time we let go; our release must not remove theirs.
+  writeFileSync(join(leasePath,'owner.json'), JSON.stringify({pid:process.pid, signature:processSignature(process.pid), token:'a-different-owner'}));
+  release();
+  assert.equal(existsSync(leasePath), true, 'release() removed a lease held under another token');
 });
