@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/noisyneighborstudio/which-agent-next/compare/v0.5.0...v0.5.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **loop:** run verification commands in order, stopping at the first failure ([#37](https://github.com/noisyneighborstudio/which-agent-next/issues/37)) ([95b1f64](https://github.com/noisyneighborstudio/which-agent-next/commit/95b1f6400444d5b28e52044e1abcd1850716af85))
+
 ## [0.5.0](https://github.com/noisyneighborstudio/which-agent-next/compare/v0.4.0...v0.5.0) (2026-09-22)
 
 
