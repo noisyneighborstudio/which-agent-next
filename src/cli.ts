@@ -1,20 +1,12 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
 import { collect, configPath, decide, loadConfig } from "./index.js";
 import { shellQuote } from "./util.js";
 import { PROBES } from "./probes.js";
 import { agentId, rank } from "./rank.js";
 import { renderExplain, renderTable } from "./render.js";
 import type { Config } from "./types.js";
-
-const VERSION = (() => {
-  try {
-    return createRequire(import.meta.url)("../package.json").version as string;
-  } catch {
-    return "0.0.0";
-  }
-})();
+import { startUpdateCheck, upgrade, VERSION } from "./update.js";
 
 const HELP = `which-agent-next — pick the agent CLI with the most usage left.
 
@@ -24,6 +16,7 @@ const HELP = `which-agent-next — pick the agent CLI with the most usage left.
   which-agent-next --json          machine-readable output
   which-agent-next --id            print <cli>|<profile> instead of a command
   which-agent-next --run -- <args> run the winning agent, passing <args> through
+  wan upgrade                      install the latest release
 
 Everything after "--" is handed to the agent untouched, including flags that
 collide with this tool's own ("-- --json -p hi" is the agent's --json).
@@ -50,7 +43,10 @@ Exit codes: 0 picked, 3 nothing available, 2 bad usage.
 
 Tiers, best first: plenty (>=50% left) · ok (>=20%) · unknown (no quota API)
 · low (>=min-headroom) · local (unmetered) · exhausted. Within one tier the
-preference order wins, so a stronger agent isn't demoted over a few percent.`;
+preference order wins, so a stronger agent isn't demoted over a few percent.
+
+A newer release is announced on stderr at most once a day, only in a terminal.
+Silence it with NO_UPDATE_NOTIFIER=1.`;
 
 interface Args {
   mode: "command" | "id" | "explain" | "table" | "json";
@@ -110,9 +106,12 @@ function fail(msg: string): never {
 }
 
 async function main() {
+  if (process.argv[2] === "upgrade") process.exit(upgrade());
+  const notify = startUpdateCheck();
   if (process.argv[2] === 'loop') {
     const { loopMain } = await import('./loop/cli.js');
     await loopMain(process.argv.slice(3));
+    await notify();
     return;
   }
   const args = parse(process.argv.slice(2));
@@ -158,16 +157,17 @@ async function main() {
   if (!winner) {
     if (args.mode === "command")
       console.error("which-agent-next: no agent has usable capacity (try --explain)");
+    await notify();
     process.exit(3);
   }
 
-  if (args.run) {
-    const [bin, ...rest] = winner.command.split(" ");
-    if (args.mode === "command") console.error(`which-agent-next: running ${winner.command}`);
-    const child = spawn(bin, [...rest, ...args.passthrough], { stdio: "inherit" });
-    child.on("exit", (code, signal) => process.exit(signal ? 1 : code ?? 0));
-    return;
-  }
+  // Not before --run: the agent owns the terminal from here on.
+  if (!args.run) return notify();
+
+  const [bin, ...rest] = winner.command.split(" ");
+  if (args.mode === "command") console.error(`which-agent-next: running ${winner.command}`);
+  const child = spawn(bin, [...rest, ...args.passthrough], { stdio: "inherit" });
+  child.on("exit", (code, signal) => process.exit(signal ? 1 : code ?? 0));
 }
 
 async function tableOnly(config: Config, probes = PROBES) {
