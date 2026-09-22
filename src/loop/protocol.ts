@@ -13,8 +13,8 @@ export interface TestJob {
 }
 
 export interface LoopState extends RunState {
-  host?: { pid: number; signature: string; heartbeat: number; session?: string };
-  monitor?: { pid: number; signature: string; heartbeat: number };
+  host?: { hostId?: string; pid: number; signature: string; heartbeat: number; session?: string };
+  monitor?: { hostId?: string; pid: number; signature: string; heartbeat: number };
   dashboard?: { pid: number; url: string };
   settings: { concurrency: number; checkpointMs: number; invocationMs: number; monitorMs: number; keepAwake: boolean };
   jobs: TestJob[];
