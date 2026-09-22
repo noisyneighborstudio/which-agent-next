@@ -5,7 +5,7 @@ import { readRun, withRunRetry, reserveInvocation, finishInvocation, reconcileIn
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { invokeAgent, selectProvider, parseAgentReport, gitRevision, createWorktree, inspectChanges, integrateWorktree, artifactRevision, processAlive, terminateOwnedProcess, runCommand, processSignature as agentProcessSignature } from './runtime.js';
 import { type LoopState, type TestJob, rolePrompt, object, textField } from './protocol.js';
-import { acquireLease, processSignature, ownsProcess } from './ownership.js';
+import { acquireLease, processSignature, ownsProcess, hostId } from './ownership.js';
 import { copyArtifacts, integrateArtifacts, inventory, ownsPath, recoverArtifactTransaction } from './artifacts.js';
 import { startJob, collectJob, stopJobs, reconcileJobs } from './jobs.js';
 import { publishProgress, progressText } from './progress.js';
@@ -464,7 +464,7 @@ async function controllerOwned(dir: string): Promise<void> {
       if (surviving.length) throw new Error('Surviving agent processes own work. Monitor must reconcile them before controller recovery.');
       reconcileInvocations(s, processAlive);
       if (s.stopRequested || terminal(s)) throw new Error('Run is stopped; use explicit resume after inspecting state.');
-      s.host = { pid: process.pid, signature: processSignature(process.pid), heartbeat: Date.now(), session: `wan-${s.id}` };
+      s.host = { hostId: hostId(), pid: process.pid, signature: processSignature(process.pid), heartbeat: Date.now(), session: `wan-${s.id}` };
       s.status = 'RUNNING'; event(s, 'controller-start', `Controller pid ${process.pid}`);
       for (const t of s.plan.tasks) if (t.status === 'running') t.status = 'pending';
     });

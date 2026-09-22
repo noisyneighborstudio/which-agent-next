@@ -3,11 +3,11 @@ import { mkdirSync, readFileSync, writeFileSync, openSync, closeSync, existsSync
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { TestJob } from './protocol.js';
-import { ownsProcess } from './ownership.js';
+import { ownsProcess, hostId } from './ownership.js';
 
 const LAUNCH_GRACE_MS = 5000;
 type Intent = TestJob & { cwd: string; generation: number };
-type Owner = { pid: number; signature: string; token: string; members?: { pid: number; signature: string }[] };
+type Owner = { hostId?: string; pid: number; signature: string; token: string; members?: { hostId?: string; pid: number; signature: string }[] };
 function read<T>(path: string): T | undefined {
   try { return JSON.parse(readFileSync(path, 'utf8')); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
@@ -30,7 +30,7 @@ const fs = require('node:fs'), cp = require('node:child_process'), path = requir
 const spec = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
 const file = name => path.join(spec.directory, name);
 const signature = pid => { try { return cp.execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {encoding:'utf8'}).trim(); } catch { return ''; } };
-const owner = {pid: process.pid, signature: signature(process.pid), token: require('node:crypto').randomUUID(), members: []};
+const owner = {hostId: process.env.WAN_HOST_ID, pid: process.pid, signature: signature(process.pid), token: require('node:crypto').randomUUID(), members: []};
 if (!owner.signature) process.exit(1);
 const atomic = (name, value) => { const temp = file(name + '.' + owner.token); fs.writeFileSync(temp, JSON.stringify(value), {mode:0o600}); fs.renameSync(temp, file(name)); };
 const claim = file('claim.' + owner.token);
@@ -41,7 +41,7 @@ let ended = false;
 const snapshot = () => {
   try {
     const rows = cp.execFileSync('ps', ['-axo', 'pid=,pgid=,lstart='], {encoding:'utf8'}).trim().split('\n');
-    owner.members = rows.flatMap(row => { const m = row.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/); return m && +m[2] === process.pid ? [{pid:+m[1], signature:m[3].trim()}] : []; });
+    owner.members = rows.flatMap(row => { const m = row.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/); return m && +m[2] === process.pid ? [{hostId: owner.hostId, pid:+m[1], signature:m[3].trim()}] : []; });
     atomic('owner.json', owner);
   } catch {}
 };
@@ -64,7 +64,7 @@ function launch(intent: Intent): void {
   if (existsSync(join(intent.directory, 'execution.json')) || existsSync(join(intent.directory, 'stop.json'))) return;
   const fd = openSync(join(intent.directory, 'output.log'), 'a', 0o600);
   try {
-    const child = spawn(process.execPath, ['-e', RUNNER, join(intent.directory, 'intent.json')], { cwd: intent.cwd, detached: true, stdio: ['ignore', fd, fd] });
+    const child = spawn(process.execPath, ['-e', RUNNER, join(intent.directory, 'intent.json')], { cwd: intent.cwd, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, WAN_HOST_ID: hostId() } });
     // An unsuccessful spawn leaves a recoverable intent; never overwrite another wrapper's result.
     child.on('error', () => {});
     child.unref();

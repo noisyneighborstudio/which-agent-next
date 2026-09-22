@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import { startJob, collectJob, reconcileJobs, jobAlive, stopJobs } from '../dist/loop/jobs.js';
 import { startPane, launchRun } from '../dist/loop/host.js';
 import { createRun, initializeRun, approveRun, readRun } from '../dist/loop/state.js';
-import { processSignature, acquireLease } from '../dist/loop/ownership.js';
+import { processSignature, acquireLease, hostId, ownsProcess } from '../dist/loop/ownership.js';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn, limit = 5000) {
@@ -217,4 +217,41 @@ test('a lease is refused rather than stolen, and release is token-guarded', asyn
   writeFileSync(join(leasePath,'owner.json'), JSON.stringify({pid:process.pid, signature:processSignature(process.pid), token:'a-different-owner'}));
   release();
   assert.equal(existsSync(leasePath), true, 'release() removed a lease held under another token');
+});
+
+test('an owner on another host is never authenticated, even with a valid signature', async t => {
+  const dir = fixture(t);
+  const bystander = spawn(process.execPath, ['-e','setInterval(()=>{},1000)'], {detached:true, stdio:'ignore'});
+  bystander.unref();
+  t.after(() => { try { process.kill(-bystander.pid,'SIGKILL'); } catch {} });
+  await until(() => processSignature(bystander.pid));
+
+  // Everything about this record is locally valid: the pid is live and the
+  // signature is its real birth time. Only the host differs - which is exactly
+  // the case a pid comparison cannot see.
+  const signature = processSignature(bystander.pid);
+  assert.equal(ownsProcess({pid:bystander.pid, signature}), true, 'fixture must be authentic locally');
+  assert.equal(ownsProcess({pid:bystander.pid, signature, hostId:'some-other-machine'}), false);
+  assert.notEqual(hostId(), 'some-other-machine');
+
+  const { createHash } = await import('node:crypto');
+  const command = 'echo should-not-run >> executions';
+  const id = createHash('sha256').update(JSON.stringify(['candidate',command,0,dir,'test',null])).digest('hex');
+  const directory = join(dir,'jobs',id); mkdirSync(directory,{recursive:true});
+  const job = {kind:'test',id,directory,command,candidate:'candidate',generation:0,cwd:dir,pid:0,startedAt:Date.now()};
+  writeFileSync(join(directory,'intent.json'),JSON.stringify(job));
+  writeFileSync(join(directory,'owner.json'),JSON.stringify({hostId:'some-other-machine', pid:bystander.pid, signature, token:'remote'}));
+
+  assert.equal(jobAlive(job), false, 'a foreign host record must not authenticate');
+  await stopJobs([job]);
+  assert.equal(running(bystander.pid), true, 'stopJobs signalled a process group owned by another host');
+  assert.equal(existsSync(join(dir,'executions')), false);
+});
+
+test('a job stamps the executing host, not the intent author', async t => {
+  const dir = fixture(t);
+  const job = startJob(dir, dir, 'echo stamped', 'candidate');
+  await until(() => collectJob(job).endedAt);
+  const owner = JSON.parse(readFileSync(join(job.directory,'owner.json'),'utf8'));
+  assert.equal(owner.hostId, hostId());
 });

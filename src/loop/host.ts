@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { mkdirSync, readdirSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs';
 import { tmuxStart, tmuxAlive, runCommand, serviceDefinition } from './runtime.js';
-import { acquireLease, ownsProcess, processSignature } from './ownership.js';
+import { acquireLease, ownsProcess, processSignature, hostId } from './ownership.js';
 import { inspectRun, supervisoryAssessment, mutate, stateOf, event } from './engine.js';
 import { serveDashboard, publishProgress } from './progress.js';
 
@@ -106,7 +106,7 @@ export async function monitor(dir: string, options: { assess?: typeof supervisor
   let keepAwake: ReturnType<typeof spawn> | undefined;
   try {
     server = await serveDashboard(dir);
-    mutate(dir, s => { s.monitor = { pid: process.pid, signature: processSignature(process.pid), heartbeat: Date.now() }; });
+    mutate(dir, s => { s.monitor = { hostId: hostId(), pid: process.pid, signature: processSignature(process.pid), heartbeat: Date.now() }; });
     if (stateOf(dir).settings.keepAwake) {
       if (process.platform === 'darwin') keepAwake = spawn('caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore' });
       else if (process.platform === 'linux') keepAwake = spawn('systemd-inhibit', ['--what=sleep', '--why=Authorized wan loop run', '--mode=block', 'sleep', 'infinity'], { stdio: 'ignore' });
